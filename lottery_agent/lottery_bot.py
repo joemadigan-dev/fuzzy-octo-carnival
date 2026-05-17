@@ -88,9 +88,8 @@ def login(page):
 
     # Accept cookies/consent banner if present
     for sel in [
-        'button:has-text("Allow All")',
-        'button:has-text("Allow all")',
-        'button:has-text("Accept All")',
+        'button:has-text("Allow Selection")',
+        'button:has-text("Allow selection")',
         'button:has-text("Accept")',
         '#onetrust-accept-btn-handler',
     ]:
