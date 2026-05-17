@@ -101,8 +101,8 @@ def login(page):
             pass
 
     # Fill credentials
-    page.fill('input[type="email"], input[name="email"], input[name="username"]', EMAIL)
-    page.fill('input[type="password"], input[name="password"]', PASSWORD)
+    page.fill('#username', EMAIL)
+    page.fill('#password', PASSWORD)
     screenshot(page, "02_credentials_filled")
 
     page.click(
