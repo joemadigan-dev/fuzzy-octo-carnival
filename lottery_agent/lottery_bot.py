@@ -83,7 +83,7 @@ def main():
 
 def login(page):
     log.info("Opening login page...")
-    page.goto(f"{BASE_URL}/login", wait_until="domcontentloaded", timeout=30_000)
+    page.goto(f"{BASE_URL}/account/login", wait_until="domcontentloaded", timeout=30_000)
     screenshot(page, "01_login_page")
 
     # Accept cookies banner if present
