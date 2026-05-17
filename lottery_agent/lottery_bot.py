@@ -128,12 +128,7 @@ def login(page):
 
 # Ordered list of paths lottery.ie uses for ticket/order history.
 HISTORY_PATHS = [
-    "/my-account/my-tickets",
-    "/my-account/tickets",
-    "/my-account/orders",
-    "/account/my-tickets",
-    "/account/tickets",
-    "/my-tickets",
+    "/account/tickets/draw-games",
 ]
 
 # Selectors that might identify a "Play Again" / "Replay" action.
