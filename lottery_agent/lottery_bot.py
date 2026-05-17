@@ -86,11 +86,17 @@ def login(page):
     page.goto(f"{BASE_URL}/account/login", wait_until="domcontentloaded", timeout=30_000)
     screenshot(page, "01_login_page")
 
-    # Accept cookies banner if present
-    for sel in ['button:has-text("Accept")', 'button:has-text("Accept All")', '#onetrust-accept-btn-handler']:
+    # Accept cookies/consent banner if present
+    for sel in [
+        'button:has-text("Allow All")',
+        'button:has-text("Allow all")',
+        'button:has-text("Accept All")',
+        'button:has-text("Accept")',
+        '#onetrust-accept-btn-handler',
+    ]:
         try:
             page.click(sel, timeout=3_000)
-            log.info("Dismissed cookie banner.")
+            log.info("Dismissed consent banner.")
             break
         except PlaywrightTimeout:
             pass
