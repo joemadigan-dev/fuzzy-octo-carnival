@@ -126,26 +126,18 @@ def login(page):
 # Ticket replay
 # ---------------------------------------------------------------------------
 
-# Ordered list of paths lottery.ie uses for ticket/order history.
-HISTORY_PATHS = [
-    "/account/tickets/draw-games",
+HISTORY_URL = f"{BASE_URL}/account/tickets/draw-games"
+
+# Selectors for individual ticket links in the history list.
+TICKET_LINK_SELECTORS = [
+    'a[href*="/account/tickets/"]',
+    'a[href*="/ticket/"]',
+    '.ticket-item a',
+    '.ticket a',
+    'li a[href*="ticket"]',
 ]
 
-# Selectors that might identify a "Play Again" / "Replay" action.
-REPLAY_SELECTORS = [
-    'button:has-text("Play Again")',
-    'a:has-text("Play Again")',
-    'button:has-text("Replay")',
-    'a:has-text("Replay")',
-    'button:has-text("Re-enter")',
-    'a:has-text("Re-enter")',
-    '.play-again',
-    '.replay-btn',
-    '[data-testid="replay-btn"]',
-    '[data-action="replay"]',
-]
-
-# Selectors for a confirmation / payment button after clicking replay.
+# Selectors for a confirmation / payment button after clicking "Replay same numbers".
 CONFIRM_SELECTORS = [
     'button:has-text("Confirm")',
     'button:has-text("Buy Now")',
@@ -159,76 +151,84 @@ CONFIRM_SELECTORS = [
 
 
 def replay_last_3_tickets(page):
-    log.info("Looking for ticket history...")
-    reached = False
-    for path in HISTORY_PATHS:
-        page.goto(f"{BASE_URL}{path}", wait_until="domcontentloaded", timeout=20_000)
-        url = page.url.lower()
-        if "404" not in url and "not-found" not in url and "error" not in url:
-            reached = True
-            log.info("Ticket history page: %s", page.url)
-            break
-
-    if not reached:
-        screenshot(page, "04_history_not_found")
-        raise RuntimeError("Could not reach the ticket history page. See screenshot 04_history_not_found.")
-
+    log.info("Opening ticket history...")
+    page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=20_000)
     page.wait_for_load_state("networkidle", timeout=15_000)
     screenshot(page, "04_ticket_history")
 
-    # Collect up to 3 replay buttons
-    replay_buttons = []
-    for sel in REPLAY_SELECTORS:
-        buttons = page.query_selector_all(sel)
-        if buttons:
-            log.info("Found %d replay element(s) with selector '%s'.", len(buttons), sel)
-            replay_buttons = buttons
-            break
+    # Collect the URLs of the top 3 tickets BEFORE replaying any.
+    # This prevents us from replaying the same ticket three times when
+    # a freshly replayed ticket jumps to the top of the list.
+    ticket_urls = _collect_ticket_urls(page, count=3)
 
-    if not replay_buttons:
-        screenshot(page, "04_no_replay_buttons")
+    if not ticket_urls:
         raise RuntimeError(
-            "No 'Play Again' / 'Replay' buttons found. "
-            "The site layout may have changed — see screenshot 04_no_replay_buttons."
+            "Could not find any ticket links on the history page. "
+            "See screenshot 04_ticket_history."
         )
 
-    replayed = 0
-    for btn in replay_buttons[:3]:
-        _replay_single(page, btn, replayed + 1)
-        replayed += 1
-        # Return to history page for next ticket
-        if replayed < 3 and len(replay_buttons) > replayed:
-            page.go_back()
-            page.wait_for_load_state("networkidle", timeout=15_000)
+    log.info("Collected %d ticket URL(s) to replay.", len(ticket_urls))
 
-    log.info("Replayed %d ticket(s).", replayed)
+    for i, url in enumerate(ticket_urls, 1):
+        log.info("Replaying ticket %d: %s", i, url)
+        page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+        page.wait_for_load_state("networkidle", timeout=15_000)
+        screenshot(page, f"05_ticket_{i}_detail")
+        _click_replay_and_confirm(page, i)
 
 
-def _replay_single(page, button, ticket_num: int):
-    log.info("Replaying ticket %d...", ticket_num)
-    button.click()
-    page.wait_for_load_state("networkidle", timeout=20_000)
-    screenshot(page, f"05_replay_{ticket_num}_after_click")
+def _collect_ticket_urls(page, count: int) -> list:
+    """Return the hrefs of the first `count` ticket links on the history page."""
+    for sel in TICKET_LINK_SELECTORS:
+        elements = page.query_selector_all(sel)
+        urls = []
+        seen = set()
+        for el in elements:
+            href = el.get_attribute("href") or ""
+            if not href or href in seen:
+                continue
+            seen.add(href)
+            urls.append(href if href.startswith("http") else f"{BASE_URL}{href}")
+            if len(urls) == count:
+                break
+        if urls:
+            log.info("Found ticket links using selector '%s'.", sel)
+            return urls
 
-    # Look for a confirmation button in the resulting page/modal
-    confirmed = False
+    screenshot(page, "04_no_ticket_links")
+    return []
+
+
+def _click_replay_and_confirm(page, ticket_num: int):
+    """Click 'Replay same numbers' on a ticket detail page and confirm."""
+    try:
+        page.click('button:has-text("Replay same numbers")', timeout=10_000)
+        page.wait_for_load_state("networkidle", timeout=20_000)
+        screenshot(page, f"06_ticket_{ticket_num}_after_replay")
+        log.info("Clicked 'Replay same numbers' for ticket %d.", ticket_num)
+    except PlaywrightTimeout:
+        screenshot(page, f"06_ticket_{ticket_num}_no_replay_button")
+        raise RuntimeError(
+            f"'Replay same numbers' button not found for ticket {ticket_num}. "
+            f"See screenshot 06_ticket_{ticket_num}_no_replay_button."
+        )
+
+    # Handle any confirmation / checkout step that follows
     for sel in CONFIRM_SELECTORS:
         try:
             page.click(sel, timeout=5_000)
             page.wait_for_load_state("networkidle", timeout=20_000)
-            screenshot(page, f"06_replay_{ticket_num}_confirmed")
-            log.info("Ticket %d confirmed.", ticket_num)
-            confirmed = True
-            break
+            screenshot(page, f"07_ticket_{ticket_num}_confirmed")
+            log.info("Ticket %d purchase confirmed.", ticket_num)
+            return
         except PlaywrightTimeout:
             pass
 
-    if not confirmed:
-        log.warning(
-            "No confirmation button found for ticket %d — the page may have "
-            "already handled it automatically. See screenshot 05_replay_%d_after_click.",
-            ticket_num, ticket_num,
-        )
+    # No confirm button found — the replay may have completed automatically
+    log.info(
+        "No extra confirmation step found for ticket %d — assumed complete.",
+        ticket_num,
+    )
 
 
 # ---------------------------------------------------------------------------
