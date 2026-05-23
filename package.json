@@ -1,17 +1,31 @@
 {
-  "name": "stock-market-dashboard",
-  "version": "1.0.0",
-  "description": "Live stock market dashboard with color-coded tiles for large-screen display.",
-  "main": "server.js",
-  "type": "module",
+  "name": "board-of-five",
+  "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@supabase/supabase-js": "^2.47.0",
+    "@supabase/ssr": "^0.5.2",
+    "@anthropic-ai/sdk": "^0.33.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^3.4.1",
+    "postcss": "^8",
+    "autoprefixer": "^10.0.1",
+    "@tailwindcss/typography": "^0.5.15"
   }
 }

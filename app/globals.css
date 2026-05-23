@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F8F7F4;
+  --text: #111827;
+  --text-secondary: #4B5563;
+  --accent: #1E3A8A;
+  --border: #E5E7EB;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer components {
+  .prose-brief {
+    @apply prose prose-gray max-w-none;
+  }
+
+  .prose-brief h1 {
+    @apply text-2xl font-semibold text-gray-900 mb-6;
+  }
+
+  .prose-brief h2 {
+    @apply text-lg font-semibold text-gray-900 mt-8 mb-3 pt-6 border-t border-gray-100;
+  }
+
+  .prose-brief h2:first-of-type {
+    @apply border-t-0 pt-0 mt-0;
+  }
+
+  .prose-brief ul {
+    @apply space-y-1;
+  }
+
+  .prose-brief p {
+    @apply text-gray-700 leading-relaxed;
+  }
+}
