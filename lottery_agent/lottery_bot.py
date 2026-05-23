@@ -94,7 +94,7 @@ def _dismiss_consent_and_login(page):
     # Log in
     page.fill("#username", EMAIL)
     page.fill("#password", PASSWORD)
-    page.click('button[type="submit"]')
+    page.click('#signInButton')
     page.wait_for_load_state("networkidle", timeout=30_000)
     _screenshot(page, "03_after_login")
 
