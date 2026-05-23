@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-lottery.ie automation agent
-Logs in and replays the last 3 purchased tickets.
-Meant to be invoked by a scheduler (cron / Task Scheduler) on Wed & Sat at 17:00.
+Lottery.ie automation agent — family syndicate (Madigan Lotto)
+Plays fixed lines from tickets_family.json and sends the confirmation
+screenshot to the Madigan Lotto WhatsApp group.
+
+Scheduled: Wednesday and Saturday at 17:00 Irish time.
 """
 
 import os
 import sys
-import time
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -18,16 +21,19 @@ try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
-    pass  # dotenv is optional; env vars can be set by the OS scheduler
+    pass
 
-EMAIL = os.environ.get("LOTTERY_EMAIL", "")
-PASSWORD = os.environ.get("LOTTERY_PASSWORD", "")
-# Set LOTTERY_HEADLESS=true in env to run without a visible browser window
-HEADLESS = os.environ.get("LOTTERY_HEADLESS", "false").lower() == "true"
+EMAIL          = os.environ.get("LOTTERY_EMAIL", "")
+PASSWORD       = os.environ.get("LOTTERY_PASSWORD", "")
+HEADLESS       = os.environ.get("LOTTERY_HEADLESS", "false").lower() == "true"
+WHATSAPP_GROUP = os.environ.get("WHATSAPP_GROUP", "Madigan Lotto")
 
-BASE_URL = "https://www.lottery.ie"
-SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
-LOG_FILE = Path(__file__).parent / "lottery_agent.log"
+BASE_URL             = "https://www.lottery.ie"
+SCRIPT_DIR           = Path(__file__).parent
+TICKETS_FILE         = SCRIPT_DIR / "tickets_family.json"
+SCREENSHOT_DIR       = SCRIPT_DIR / "screenshots"
+WHATSAPP_SESSION_DIR = SCRIPT_DIR / "whatsapp_session"
+LOG_FILE             = SCRIPT_DIR / "lottery_agent.log"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,12 +48,39 @@ log = logging.getLogger(__name__)
 
 def main():
     if not EMAIL or not PASSWORD:
-        log.error("LOTTERY_EMAIL and LOTTERY_PASSWORD environment variables must be set.")
+        log.error("LOTTERY_EMAIL and LOTTERY_PASSWORD must be set.")
         sys.exit(1)
 
     SCREENSHOT_DIR.mkdir(exist_ok=True)
-    log.info("=== Lottery agent starting ===")
+    WHATSAPP_SESSION_DIR.mkdir(exist_ok=True)
 
+    log.info("=== Lottery agent starting ===")
+    tickets = load_tickets()
+
+    confirmation_path = play_lottery(tickets)
+    if confirmation_path:
+        send_whatsapp(confirmation_path)
+
+    log.info("=== Lottery agent finished ===")
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+def load_tickets() -> dict:
+    if not TICKETS_FILE.exists():
+        log.error("Tickets file not found: %s", TICKETS_FILE)
+        sys.exit(1)
+    with open(TICKETS_FILE) as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — Play lottery
+# ---------------------------------------------------------------------------
+
+def play_lottery(tickets: dict) -> Optional[Path]:
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=HEADLESS,
@@ -62,31 +95,24 @@ def main():
             ),
         )
         page = context.new_page()
-
         try:
             login(page)
-            replay_last_3_tickets(page)
-            log.info("=== Lottery agent finished successfully ===")
+            return enter_and_confirm(page, tickets)
         except Exception as exc:
-            screenshot(page, "fatal_error")
-            log.error("Agent failed: %s", exc, exc_info=True)
+            screenshot(page, "fatal_lottery_error")
+            log.error("Lottery play failed: %s", exc, exc_info=True)
             log.error("Check screenshots/ for a visual of what happened.")
-            sys.exit(1)
+            return None
         finally:
             context.close()
             browser.close()
 
 
-# ---------------------------------------------------------------------------
-# Login
-# ---------------------------------------------------------------------------
-
 def login(page):
-    log.info("Opening login page...")
+    log.info("Logging in...")
     page.goto(f"{BASE_URL}/account/login", wait_until="domcontentloaded", timeout=30_000)
     screenshot(page, "01_login_page")
 
-    # Accept cookies/consent banner if present
     for sel in [
         'button:has-text("Allow Selection")',
         'button:has-text("Allow selection")',
@@ -100,135 +126,219 @@ def login(page):
         except PlaywrightTimeout:
             pass
 
-    # Fill credentials
     page.fill('#username', EMAIL)
     page.fill('#password', PASSWORD)
     screenshot(page, "02_credentials_filled")
 
     page.click(
         'button[type="submit"], input[type="submit"], '
-        'button:has-text("Log In"), button:has-text("Sign In"), '
-        'button:has-text("Login"), .login-button, .btn-login'
+        'button:has-text("Log In"), button:has-text("Sign In"), button:has-text("Login")'
     )
     page.wait_for_load_state("networkidle", timeout=30_000)
     screenshot(page, "03_after_login")
 
-    current = page.url.lower()
-    if "login" in current or "sign-in" in current or "signin" in current:
-        raise RuntimeError(
-            "Login failed — browser is still on the login page. "
-            "Check your credentials or see screenshot 03_after_login."
-        )
-    log.info("Login succeeded. Current URL: %s", page.url)
+    if "login" in page.url.lower():
+        raise RuntimeError("Login failed — still on login page. Check credentials.")
+    log.info("Logged in. URL: %s", page.url)
 
 
-# ---------------------------------------------------------------------------
-# Ticket replay
-# ---------------------------------------------------------------------------
+def enter_and_confirm(page, tickets: dict) -> Optional[Path]:
+    lines      = tickets["lines"]
+    lotto_plus = tickets.get("lotto_plus", False)
 
-HISTORY_URL = f"{BASE_URL}/account/tickets/draw-games"
-
-# Selectors for individual ticket links in the history list.
-TICKET_LINK_SELECTORS = [
-    'a[href*="/account/tickets/"]',
-    'a[href*="/ticket/"]',
-    '.ticket-item a',
-    '.ticket a',
-    'li a[href*="ticket"]',
-]
-
-# Selectors for a confirmation / payment button after clicking "Replay same numbers".
-CONFIRM_SELECTORS = [
-    'button:has-text("Confirm")',
-    'button:has-text("Buy Now")',
-    'button:has-text("Purchase")',
-    'button:has-text("Pay")',
-    'button:has-text("Add to Basket")',
-    'button:has-text("Continue")',
-    '.confirm-btn',
-    '[data-testid="confirm-btn"]',
-]
-
-
-def replay_last_3_tickets(page):
-    log.info("Opening ticket history...")
-    page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=20_000)
+    log.info("Navigating to Lotto play page...")
+    page.goto(f"{BASE_URL}/lotto/play", wait_until="domcontentloaded", timeout=30_000)
     page.wait_for_load_state("networkidle", timeout=15_000)
-    screenshot(page, "04_ticket_history")
+    screenshot(page, "04_lotto_play_page")
 
-    # Collect the URLs of the top 3 tickets BEFORE replaying any.
-    # This prevents us from replaying the same ticket three times when
-    # a freshly replayed ticket jumps to the top of the list.
-    ticket_urls = _collect_ticket_urls(page, count=3)
+    for i, line in enumerate(lines):
+        log.info("Entering line %d: %s", i + 1, line)
+        _enter_line(page, i, line)
+        screenshot(page, f"05_line_{i + 1}_entered")
 
-    if not ticket_urls:
-        raise RuntimeError(
-            "Could not find any ticket links on the history page. "
-            "See screenshot 04_ticket_history."
-        )
+    if lotto_plus:
+        _enable_lotto_plus(page)
 
-    log.info("Collected %d ticket URL(s) to replay.", len(ticket_urls))
+    screenshot(page, "06_before_purchase")
+    _confirm_purchase(page)
 
-    for i, url in enumerate(ticket_urls, 1):
-        log.info("Replaying ticket %d: %s", i, url)
-        page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-        page.wait_for_load_state("networkidle", timeout=15_000)
-        screenshot(page, f"05_ticket_{i}_detail")
-        _click_replay_and_confirm(page, i)
+    # Check for insufficient funds warning
+    page_text = page.inner_text("body").lower()
+    if any(w in page_text for w in ("insufficient", "not enough credit", "top up", "add funds")):
+        log.warning("Insufficient funds detected — please top up your account.")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = SCREENSHOT_DIR / f"confirmation_{ts}.png"
+    page.screenshot(path=str(path), full_page=True)
+    log.info("Confirmation screenshot saved: %s", path)
+    screenshot(page, "07_confirmation")
+    return path
 
 
-def _collect_ticket_urls(page, count: int) -> list:
-    """Return the hrefs of the first `count` ticket links on the history page."""
-    for sel in TICKET_LINK_SELECTORS:
-        elements = page.query_selector_all(sel)
-        urls = []
-        seen = set()
-        for el in elements:
-            href = el.get_attribute("href") or ""
-            if not href or href in seen:
-                continue
-            seen.add(href)
-            urls.append(href if href.startswith("http") else f"{BASE_URL}{href}")
-            if len(urls) == count:
+def _enter_line(page, line_index: int, numbers: list):
+    if line_index > 0:
+        for sel in [
+            'button:has-text("Add Line")',
+            'button:has-text("+ Add Line")',
+            'button:has-text("Add another line")',
+            '[data-testid="add-line"]',
+            '.add-line-btn',
+        ]:
+            try:
+                page.click(sel, timeout=3_000)
+                page.wait_for_timeout(500)
                 break
-        if urls:
-            log.info("Found ticket links using selector '%s'.", sel)
-            return urls
+            except PlaywrightTimeout:
+                pass
 
-    screenshot(page, "04_no_ticket_links")
-    return []
+    for number in numbers:
+        _click_number(page, line_index, number)
 
 
-def _click_replay_and_confirm(page, ticket_num: int):
-    """Click 'Replay same numbers' on a ticket detail page and confirm."""
-    try:
-        page.click('button:has-text("Replay same numbers")', timeout=10_000)
-        page.wait_for_load_state("networkidle", timeout=20_000)
-        screenshot(page, f"06_ticket_{ticket_num}_after_replay")
-        log.info("Clicked 'Replay same numbers' for ticket %d.", ticket_num)
-    except PlaywrightTimeout:
-        screenshot(page, f"06_ticket_{ticket_num}_no_replay_button")
-        raise RuntimeError(
-            f"'Replay same numbers' button not found for ticket {ticket_num}. "
-            f"See screenshot 06_ticket_{ticket_num}_no_replay_button."
-        )
-
-    # Handle any confirmation / checkout step that follows
-    for sel in CONFIRM_SELECTORS:
+def _click_number(page, line_index: int, number: int):
+    selectors = [
+        f'.line:nth-child({line_index + 1}) button[data-number="{number}"]',
+        f'.line:nth-child({line_index + 1}) [aria-label="{number}"]',
+        f'[data-line="{line_index}"] button[data-number="{number}"]',
+        f'button[data-number="{number}"]:not(.selected)',
+        f'[aria-label="Number {number}"]',
+    ]
+    for sel in selectors:
         try:
-            page.click(sel, timeout=5_000)
-            page.wait_for_load_state("networkidle", timeout=20_000)
-            screenshot(page, f"07_ticket_{ticket_num}_confirmed")
-            log.info("Ticket %d purchase confirmed.", ticket_num)
+            page.click(sel, timeout=2_000)
             return
         except PlaywrightTimeout:
             pass
 
-    # No confirm button found — the replay may have completed automatically
-    log.info(
-        "No extra confirmation step found for ticket %d — assumed complete.",
-        ticket_num,
+    raise RuntimeError(
+        f"Could not click number {number} on line {line_index + 1}. "
+        "See screenshots — the number entry UI likely uses different selectors."
     )
+
+
+def _enable_lotto_plus(page):
+    log.info("Enabling Lotto Plus...")
+    for sel in [
+        'label:has-text("Lotto Plus")',
+        'button:has-text("Lotto Plus")',
+        'input[name*="plus"][type="checkbox"]',
+        '[data-testid="lotto-plus"]',
+        '.lotto-plus-toggle',
+    ]:
+        try:
+            page.click(sel, timeout=3_000)
+            log.info("Lotto Plus enabled.")
+            return
+        except PlaywrightTimeout:
+            pass
+    log.warning("Could not find Lotto Plus toggle — skipping.")
+
+
+def _confirm_purchase(page):
+    log.info("Confirming purchase...")
+    for sel in [
+        'button:has-text("Buy")',
+        'button:has-text("Play Now")',
+        'button:has-text("Purchase")',
+        'button:has-text("Confirm")',
+        'button:has-text("Pay")',
+        '[data-testid="buy-btn"]',
+    ]:
+        try:
+            page.click(sel, timeout=5_000)
+            page.wait_for_load_state("networkidle", timeout=30_000)
+            log.info("Purchase confirmed.")
+            return
+        except PlaywrightTimeout:
+            pass
+    raise RuntimeError(
+        "Could not find a purchase/confirm button. See screenshot 06_before_purchase."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — WhatsApp
+# ---------------------------------------------------------------------------
+
+def send_whatsapp(screenshot_path: Path):
+    log.info("Opening WhatsApp Web...")
+    with sync_playwright() as p:
+        # Persistent context saves the WhatsApp login between runs.
+        # First run only: a QR code will appear — scan it with your phone.
+        context = p.chromium.launch_persistent_context(
+            str(WHATSAPP_SESSION_DIR),
+            headless=False,
+            viewport={"width": 1280, "height": 900},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = context.new_page()
+        try:
+            _whatsapp_send(page, screenshot_path)
+        except Exception as exc:
+            screenshot(page, "fatal_whatsapp_error")
+            log.error("WhatsApp send failed: %s", exc, exc_info=True)
+        finally:
+            context.close()
+
+
+def _whatsapp_send(page, screenshot_path: Path):
+    page.goto("https://web.whatsapp.com", wait_until="domcontentloaded", timeout=30_000)
+
+    log.info("Waiting for WhatsApp Web to load...")
+    page.wait_for_selector(
+        '[data-testid="chat-list"], canvas[aria-label="Scan me!"], #app .landing-main',
+        timeout=60_000,
+    )
+
+    if page.query_selector('canvas[aria-label="Scan me!"], #app .landing-main'):
+        log.info("QR code shown — please scan with your phone (waiting up to 2 minutes)...")
+        page.wait_for_selector('[data-testid="chat-list"]', timeout=120_000)
+        log.info("WhatsApp Web authenticated.")
+
+    screenshot(page, "08_whatsapp_loaded")
+
+    # Search for the group
+    log.info("Searching for group '%s'...", WHATSAPP_GROUP)
+    page.click('[data-testid="search"], [data-icon="search"]', timeout=10_000)
+    page.wait_for_timeout(500)
+    page.fill(
+        '[data-testid="search-input"], input[title="Search or start new chat"]',
+        WHATSAPP_GROUP,
+    )
+    page.wait_for_timeout(2_000)
+    screenshot(page, "09_whatsapp_search")
+
+    page.click(
+        f'[title="{WHATSAPP_GROUP}"], span[title="{WHATSAPP_GROUP}"]',
+        timeout=10_000,
+    )
+    page.wait_for_timeout(1_000)
+    screenshot(page, "10_whatsapp_group_open")
+
+    # Open the attachment menu
+    log.info("Attaching screenshot...")
+    page.click(
+        '[data-testid="attach-menu-plus"], [data-icon="attach-menu-plus"]',
+        timeout=10_000,
+    )
+    page.wait_for_timeout(500)
+
+    # Upload via the Photos & Videos file input
+    with page.expect_file_chooser(timeout=10_000) as fc_info:
+        page.click(
+            '[data-testid="mi-attach-media"], span:has-text("Photos & videos"), '
+            'li:has-text("Photos")',
+            timeout=5_000,
+        )
+    fc_info.value.set_files(str(screenshot_path))
+    page.wait_for_timeout(2_000)
+    screenshot(page, "11_whatsapp_image_attached")
+
+    # Send
+    page.click('[data-testid="send"], [data-icon="send"]', timeout=10_000)
+    page.wait_for_timeout(3_000)
+    screenshot(page, "12_whatsapp_sent")
+    log.info("Screenshot sent to '%s'.", WHATSAPP_GROUP)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +351,7 @@ def screenshot(page, name: str):
     try:
         page.screenshot(path=str(path), full_page=True)
     except Exception:
-        pass  # never crash just because a screenshot failed
+        pass
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 .env
 screenshots/
+whatsapp_session/
 *.log
 __pycache__/
 *.pyc
