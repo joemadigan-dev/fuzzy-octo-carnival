@@ -1,0 +1,32 @@
+# THE WALL — Cloudflare Workers + D1 + static assets, all free tier.
+name = "the-wall"
+main = "src/worker/index.ts"
+compatibility_date = "2026-08-01"
+
+# Static frontend served by the Worker's asset pipeline (free, unlimited).
+# run_worker_first ensures /api/* always reaches the Worker, everything else
+# is served directly from the edge asset cache.
+[assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/__scheduled"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "the-wall"
+# Replace with the id printed by:  wrangler d1 create the-wall
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# ONE cron trigger for everything (free tier allows 5 per account — use 1).
+# Hourly: daily FRED series update once a day, gold (stooq) is intraday-ish.
+# Every run is idempotent and self-heals gaps left by missed runs.
+[triggers]
+crons = ["7 * * * *"]
+
+[observability]
+enabled = true
+
+# Secrets (set via `wrangler secret put NAME`, never committed):
+#   FRED_API_KEY  — optional; without it the FRED source falls back to the
+#                   keyless fredgraph.csv endpoint (same real data).
+#   ADMIN_TOKEN   — required to call POST /api/admin/refresh (manual backfill).

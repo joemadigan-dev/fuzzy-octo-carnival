@@ -1,29 +1,78 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Market Dashboard</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE WALL</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23101214'/%3E%3Crect x='2' y='9' width='3' height='5' fill='%230b6433'/%3E%3Crect x='6.5' y='5' width='3' height='9' fill='%23e8e9e4'/%3E%3Crect x='11' y='7' width='3' height='7' fill='%23dc4956'/%3E%3C/svg%3E">
+<meta name="description" content="Live macro KPI wall — oil, gold, dollar, rates, and a transparent composite regime signal.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Spline+Sans+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">MARKET DASHBOARD</div>
-    <div class="status">
-      <span id="market-state" class="market-state">--</span>
-      <span id="last-updated" class="last-updated">awaiting data</span>
-      <span id="connection" class="connection ok">live</span>
-    </div>
-  </header>
-  <main id="grid" class="grid" aria-live="polite"></main>
-  <footer class="footer">
-    <span id="symbol-count">0 symbols</span>
-    <span class="legend">
-      <span class="dot up"></span> up
-      <span class="dot down"></span> down
-      <span class="dot flat"></span> unchanged
+
+<header class="bezel">
+  <div class="wordmark">THE&nbsp;WALL</div>
+  <button class="regime-chip" id="regime-chip" data-regime="" aria-label="Composite regime — click for signal detail">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="name" id="regime-name">—</span>
+    <span class="score" id="regime-score"></span>
+  </button>
+  <div class="bezel-spacer"></div>
+  <div class="tf-switch" role="group" aria-label="Timeframe" id="tf-switch">
+    <button data-tf="d"  aria-pressed="true">D</button>
+    <button data-tf="w"  aria-pressed="false">W</button>
+    <button data-tf="m"  aria-pressed="false">M</button>
+    <button data-tf="y"  aria-pressed="false">Y</button>
+    <button data-tf="y5" aria-pressed="false">5Y</button>
+  </div>
+  <div class="bezel-meta">
+    <div class="clock" id="clock">—</div>
+    <div id="last-run">data —</div>
+  </div>
+</header>
+
+<main class="wall" id="wall" aria-live="off">
+  <!-- clusters + tiles rendered by app.js -->
+</main>
+
+<section class="signal-panel" id="signal-panel" aria-label="Composite regime signal">
+  <div class="signal-head">
+    <h2>COMPOSITE REGIME</h2>
+    <span class="sig-regime" id="sig-regime" data-regime="">—</span>
+    <span class="sig-score" id="sig-score"></span>
+    <span class="zwin-switch" role="group" aria-label="z-score window" id="zwin-switch">
+      <button data-zw="2y" aria-pressed="true">2Y</button>
+      <button data-zw="5y" aria-pressed="false">5Y</button>
     </span>
-  </footer>
-  <script src="app.js"></script>
+    <button class="disclose" id="sig-disclose" aria-expanded="false" aria-controls="signal-body">SHOW INPUTS + BACKTEST ▾</button>
+  </div>
+  <div class="signal-body" id="signal-body" hidden>
+    <div class="sig-inputs-wrap">
+      <h3>INPUTS — EVERY ONE, WITH ITS WEIGHT AND CONTRIBUTION</h3>
+      <p class="sig-note">Each input is z-scored against its own trailing distribution
+        (window selectable above). score = Σ weight·sign·z. Positive pushes toward
+        STRESS. Regime changes require the threshold breach to persist 3 consecutive
+        sessions (hysteresis). This is a regime state, not an order.</p>
+      <table class="sig-inputs" id="sig-inputs-table"></table>
+    </div>
+    <div class="sig-backtest">
+      <h3>BACKTEST — WHAT THIS COMPOSITE SAID, INCLUDING WHERE IT WAS WRONG</h3>
+      <div id="backtest-chart"></div>
+    </div>
+    <div class="sig-log">
+      <h3>REGIME CHANGE LOG</h3>
+      <div class="sig-log-scroll"><table id="sig-log-table"></table></div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot" id="foot">sources: FRED · stooq — refreshed hourly — polls every 60s</footer>
+
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

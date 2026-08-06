@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# FRED API key — free, instant: https://fred.stlouisfed.org/docs/api/api_key.html
+# Optional: without it the FRED source uses the keyless fredgraph.csv endpoint.
+FRED_API_KEY=
+# Any random string; guards POST /api/admin/refresh (manual fetch/backfill trigger).
+ADMIN_TOKEN=change-me

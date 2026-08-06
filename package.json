@@ -1,17 +1,21 @@
 {
-  "name": "stock-market-dashboard",
+  "name": "the-wall",
   "version": "1.0.0",
-  "description": "Live stock market dashboard with color-coded tiles for large-screen display.",
-  "main": "server.js",
+  "description": "THE WALL — a live macro KPI dashboard on Cloudflare Workers + D1.",
+  "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply the-wall --local",
+    "migrate:remote": "wrangler d1 migrations apply the-wall --remote",
+    "backfill:local": "node --experimental-strip-types scripts/local-backfill.mts",
+    "typecheck": "tsc --noEmit"
   },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "express": "^4.19.2"
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "typescript": "^5.5.4",
+    "uplot": "^1.6.32",
+    "wrangler": "^4.119.0"
   }
 }
