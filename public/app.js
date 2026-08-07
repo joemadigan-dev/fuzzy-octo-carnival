@@ -82,11 +82,20 @@
   }
 
   // ── tile ─────────────────────────────────────────────────────────────
+  /** The tone the whole tile wears. Uses the deadbanded direction state, so
+   *  a move too small to mean anything stays neutral instead of shouting.
+   *  Stale/error tiles are never toned — a number that stopped updating
+   *  must not assert a signal. */
+  function tileTone(k) {
+    if (k.status !== 'ok') return 'flat';
+    return tickerClass(k, k.dir?.[tf]);
+  }
+
   function tileHtml(k) {
     const chg = k.changes?.[tf] ?? null;
     const dirCls = tickerClass(k, k.dir?.[tf]);
     const c = fmtChange(k, chg);
-    const cls = tickerClass(k, chg && (chg.abs > 0 ? 'up' : chg.abs < 0 ? 'down' : 'flat'));
+    const cls = dirCls; // change text follows the same deadbanded state
     const badges = [];
     if (k.status !== 'ok') badges.push(`<span class="tile-badge">${k.status === 'stale' ? 'STALE' : 'ERR'}</span>`);
     if (k.flag) badges.push(`<span class="tile-badge flagchip">${k.flag}</span>`);
@@ -146,6 +155,7 @@
         t.className = 'tile' + (expandedTile === k.id ? ' expanded' : '');
         t.dataset.kpi = k.id;
         t.dataset.status = k.status;
+        t.dataset.tone = tileTone(k);
         t.setAttribute('aria-expanded', String(expandedTile === k.id));
         t.setAttribute('aria-label',
           `${k.label}: ${k.latest === null ? 'no data' : fmtNum(k.latest, k.decimals) + ' ' + k.unit}`
@@ -246,6 +256,7 @@
         const tileEl = wallEl.querySelector(`[data-kpi="${k.id}"]`);
         if (!tileEl) continue;
         if (p.latest !== k.latest || JSON.stringify(p.changes?.[tf]) !== JSON.stringify(k.changes?.[tf])) {
+          tileEl.dataset.tone = tileTone(k);
           tileEl.innerHTML = tileHtml(k);
           if (!REDUCED && p.latest !== k.latest) {
             tileEl.querySelector('.tile-num').classList.add('ticked');

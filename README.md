@@ -202,11 +202,20 @@ signal.
 
 ## Colour semantics
 
-**Tile colour is the tile's contribution to THE BAROMETER.** Every KPI
-declares `stressSign: +1 | -1` — whether a rising value pushes the system
-toward storm — and the tile colours from it. Green means the move is
-pushing toward benign, red toward storm. A tile can never be green while
-making the composite worse.
+**Tile colour is the tile's contribution to THE BAROMETER**, and the
+**whole tile carries it** — the face is filled green or red, departure-board
+style, not just the change line. Every KPI declares `stressSign: +1 | -1`
+— whether a rising value pushes the system toward storm — and the tile
+colours from it. Green means the move is pushing toward benign, red toward
+storm. A tile can never be green while making the composite worse.
+
+Fills are `#0b6433` / `#b32633`, deepened from the text-weight reds so both
+carry light text at the same visual weight (6.5:1 and 5.8:1). Two states
+are deliberately *not* filled: moves inside the deadband keep the neutral
+panel ground so they don't compete for attention, and **stale or errored
+tiles are never filled** — a number that stopped updating must not assert
+a signal. Expanded tiles keep their fill with the chart on a light inset
+so axes stay readable.
 
 **The frame is systemic conditions, not portfolio P&L.** Green means the
 financial system is in better shape; it deliberately does not account for

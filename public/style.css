@@ -48,6 +48,15 @@
   /* signal hues legible on the dark bezel */
   --up-bright: #4fb377;
   --down-bright: #e0656f;
+  /* whole-tile fills — the tile IS the signal. Deepened red so both fills
+     carry light text at the same weight (6.5:1 and 5.8:1 vs --fill-ink);
+     CVD separation sits in the floor band, which is legal here because
+     direction is also carried by the ▲/▼ glyph and the explicit sign. */
+  --up-fill: #0b6433;
+  --down-fill: #b32633;
+  --fill-ink: #f2f3ef;
+  --fill-dim: rgba(242, 243, 239, 0.72);
+  --fill-rule: rgba(242, 243, 239, 0.34);
 
   --font-num: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-label: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
@@ -203,8 +212,11 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* forecast-tracking clusters: visually distinct, persistently attributed */
 .cluster.attributed .cluster-head { border-bottom-style: dashed; }
-.cluster.attributed .tile { border-style: dotted; background: var(--ground); }
-.cluster.attributed .tile:hover { background: var(--panel); }
+/* forecast tiles keep the dotted border as their tell; the signal fill
+   still applies, so they read as tiles of the same wall */
+.cluster.attributed .tile { border-style: dotted; }
+.cluster.attributed .tile[data-tone="flat"] { background: var(--ground); }
+.cluster.attributed .tile[data-tone="flat"]:hover { background: var(--panel); }
 .attribution {
   font-family: var(--font-num);
   font-size: 9.5px;
@@ -229,6 +241,51 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   width: 100%;
 }
 .tile:hover { background: var(--panel-hi); }
+
+/* ── whole-tile signal fill ──────────────────────────────────────────────
+   The tile itself carries the Barometer contribution: green = this move
+   pushes the system toward benign, red = toward storm. Moves inside the
+   deadband keep the neutral panel ground so they don't compete for
+   attention, and stale/error tiles are NEVER filled — a number that
+   stopped updating must not assert a signal. */
+
+.tile[data-tone="up"], .tile[data-tone="down"] { color: var(--fill-ink); }
+.tile[data-tone="up"] { background: var(--up-fill); border-color: var(--up-fill); }
+.tile[data-tone="down"] { background: var(--down-fill); border-color: var(--down-fill); }
+.tile[data-tone="up"]:hover { background: #0d7a3e; }
+.tile[data-tone="down"]:hover { background: #c72d3b; }
+
+.tile[data-tone="up"] .tile-label,
+.tile[data-tone="down"] .tile-label,
+.tile[data-tone="up"] .tile-ts,
+.tile[data-tone="down"] .tile-ts { color: var(--fill-dim); }
+
+.tile[data-tone="up"] .tile-num,
+.tile[data-tone="down"] .tile-num,
+.tile[data-tone="up"] .tile-chg,
+.tile[data-tone="down"] .tile-chg { color: var(--fill-ink); }
+
+.tile[data-tone="up"] .tile-num .unit,
+.tile[data-tone="down"] .tile-num .unit,
+.tile[data-tone="up"] .tile-chg .pct,
+.tile[data-tone="down"] .tile-chg .pct { color: var(--fill-dim); }
+
+.tile[data-tone="up"] .tile-badge,
+.tile[data-tone="down"] .tile-badge { border-color: var(--fill-rule); color: var(--fill-dim); }
+.tile[data-tone="up"] .tile-badge.flagchip,
+.tile[data-tone="down"] .tile-badge.flagchip { border-color: var(--fill-ink); color: var(--fill-ink); }
+
+.tile[data-tone="up"] .spark-line,
+.tile[data-tone="down"] .spark-line { stroke: var(--fill-ink); opacity: 0.72; }
+.tile[data-tone="up"] .spark-dot,
+.tile[data-tone="down"] .spark-dot { fill: var(--fill-ink); }
+
+.tile[data-tone="up"]:focus-visible,
+.tile[data-tone="down"]:focus-visible { outline-color: var(--fill-ink); }
+
+/* the expanded chart sits on its own light inset so axes stay readable */
+.tile[data-tone="up"] .tile-chart,
+.tile[data-tone="down"] .tile-chart { background: var(--panel); padding: 6px; }
 
 .tile-label {
   font-size: 11px;
@@ -293,11 +350,15 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   letter-spacing: 0.03em;
 }
 
-/* stale / error states: visibly distinct, never silently stale */
+/* stale / error states: visibly distinct, never silently stale, never
+   wearing a signal colour */
 .tile[data-status="stale"], .tile[data-status="error"] {
   border-style: dashed;
+  border-color: var(--rule);
   background: var(--ground);
+  color: var(--ink);
 }
+.tile[data-status="stale"]:hover, .tile[data-status="error"]:hover { background: var(--panel); }
 .tile[data-status="stale"] .tile-num,
 .tile[data-status="error"] .tile-num { color: var(--muted); }
 .tile[data-status="stale"] .tile-chg,
@@ -329,6 +390,12 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   100% { background: transparent; }
 }
 .tile-num.ticked { animation: tick-pulse 0.7s ease-out; }
+@keyframes tick-pulse-fill {
+  0% { background: rgba(242, 243, 239, 0.32); }
+  100% { background: transparent; }
+}
+.tile[data-tone="up"] .tile-num.ticked,
+.tile[data-tone="down"] .tile-num.ticked { animation: tick-pulse-fill 0.7s ease-out; }
 .wall.tf-flipping .tile-num,
 .wall.tf-flipping .tile-chg,
 .wall.tf-flipping .tile-spark { animation: tf-flip 0.28s ease-out; }
