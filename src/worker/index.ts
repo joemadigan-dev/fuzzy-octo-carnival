@@ -13,11 +13,9 @@ export default {
     const path = url.pathname;
 
     if (!path.startsWith('/api/')) {
-      // static assets (run_worker_first only routes /api/* here normally)
       return env.ASSETS ? env.ASSETS.fetch(req) : new Response('not found', { status: 404 });
     }
 
-    // best-effort per-isolate rate limit (the edge cache absorbs the rest)
     if (rateLimited(req)) return new Response('rate limited', { status: 429 });
 
     if (req.method === 'POST' && path === '/api/admin/refresh') {
@@ -25,7 +23,6 @@ export default {
     }
     if (req.method !== 'GET') return new Response('method not allowed', { status: 405 });
 
-    // edge cache: one origin hit per TTL regardless of viewer count
     const cacheKey = new Request(url.toString(), { method: 'GET' });
     const cache = caches.default;
     const hit = await cache.match(cacheKey);
@@ -33,7 +30,7 @@ export default {
 
     let res: Response;
     if (path === '/api/wall') res = await apiWall(env);
-    else if (path === '/api/signal') res = await apiSignal(env);
+    else if (path === '/api/barometer') res = await apiBarometer(env);
     else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
     else res = json({ error: 'not found' }, 404);
 
@@ -59,7 +56,7 @@ async function apiWall(env: Env): Promise<Response> {
   ]);
 
   const stateById = new Map((stateRes.results ?? []).map((r) => [r.series_id as string, r]));
-  const kpis = KPIS.map((def) => {
+  const kpis = KPIS.filter((def) => !def.hidden).map((def) => {
     const s = stateById.get(def.id);
     return {
       id: def.id,
@@ -70,6 +67,8 @@ async function apiWall(env: Env): Promise<Response> {
       decimals: def.decimals,
       showPct: def.showPct ?? true,
       direction: def.direction,
+      freq: def.freq ?? 'daily',
+      deadline: def.deadline ?? null,
       latest: s ? (s.latest_value as number | null) : null,
       latestDate: s ? (s.latest_date as string | null) : null,
       changes: s ? JSON.parse(s.changes as string) : {},
@@ -77,31 +76,55 @@ async function apiWall(env: Env): Promise<Response> {
       dir: s ? JSON.parse(s.direction_state as string) : {},
       status: s ? (s.status as string) : 'error',
       statusDetail: s ? (s.status_detail as string | null) : 'no data yet — run the cron job or POST /api/admin/refresh',
+      flag: s ? ((s.flag as string | null) ?? null) : null,
       lastSuccessAt: s ? (s.last_success_at as string | null) : null,
       computedAt: s ? (s.computed_at as string) : null,
     };
   });
+
+  // barometer summary only — full detail + diagnostics live on /api/barometer
+  let barometer = null;
+  if (signalRow) {
+    const detail = JSON.parse(signalRow.detail);
+    const pick = (layer: string) => ({
+      '2y': slim(detail.barometer?.[layer]?.['2y']),
+      '5y': slim(detail.barometer?.[layer]?.['5y']),
+    });
+    barometer = {
+      computedAt: signalRow.computed_at,
+      pressure: pick('pressure'),
+      altitude: pick('altitude'),
+      divergence: detail.divergence ?? { '2y': false, '5y': false },
+    };
+  }
 
   return json({
     generatedAt: new Date().toISOString(),
     lastRun: lastRun?.value ?? null,
     clusters: CLUSTERS,
     kpis,
-    signal: signalRow ? { computedAt: signalRow.computed_at, ...JSON.parse(signalRow.detail) } : null,
+    barometer,
   }, 200, 60);
 }
 
-async function apiSignal(env: Env): Promise<Response> {
-  const [state, history, changes] = await Promise.all([
+function slim(d: { score?: number | null; regime?: string | null } | undefined) {
+  return d ? { score: d.score ?? null, regime: d.regime ?? null } : null;
+}
+
+async function apiBarometer(env: Env): Promise<Response> {
+  const [state, chart, changes] = await Promise.all([
     env.DB.prepare('SELECT computed_at, detail FROM signal_state WHERE id = 1').first<{ computed_at: string; detail: string }>(),
-    env.DB.prepare('SELECT date, score_2y, score_5y, regime_2y, regime_5y FROM signal_history ORDER BY date ASC').all(),
-    env.DB.prepare('SELECT date, window, from_regime, to_regime, score, drivers FROM signal_changes ORDER BY date DESC LIMIT 200').all(),
+    env.DB.prepare("SELECT points FROM charts WHERE series_id = '__barometer' AND range = 'hist'").first<{ points: string }>(),
+    env.DB.prepare('SELECT date, layer, window, from_regime, to_regime, score, drivers FROM barometer_changes ORDER BY date DESC LIMIT 200').all(),
   ]);
-  if (!state) return json({ error: 'signal not computed yet' }, 503);
+  if (!state) return json({ error: 'barometer not computed yet' }, 503);
+  const detail = JSON.parse(state.detail);
   return json({
     computedAt: state.computed_at,
-    detail: JSON.parse(state.detail),
-    history: history.results ?? [],
+    barometer: detail.barometer,
+    divergence: detail.divergence,
+    diagnostics: detail.diagnostics,
+    history: chart ? JSON.parse(chart.points) : null,
     changes: (changes.results ?? []).map((c) => ({ ...c, drivers: JSON.parse(c.drivers as string) })),
   }, 200, 300);
 }
@@ -109,7 +132,7 @@ async function apiSignal(env: Env): Promise<Response> {
 async function apiSeries(env: Env, rawId: string): Promise<Response> {
   const id = decodeURIComponent(rawId);
   const def = kpiById.get(id);
-  if (!def) return json({ error: 'unknown series' }, 404);
+  if (!def || def.hidden) return json({ error: 'unknown series' }, 404);
   const row = await env.DB.prepare("SELECT points FROM charts WHERE series_id = ? AND range = 'y5'")
     .bind(id).first<{ points: string }>();
   if (!row) return json({ error: 'no chart data yet' }, 503);
@@ -122,7 +145,6 @@ async function apiSeries(env: Env, rawId: string): Promise<Response> {
 async function adminRefresh(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? new URL(req.url).searchParams.get('token');
   if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return json({ error: 'unauthorized' }, 401);
-  // run inline so the caller sees the log (backfill is fetch/IO-bound)
   try {
     const log = await runScheduled(env);
     return json({ ok: true, log: log.split('\n') });
@@ -149,7 +171,7 @@ function json(body: unknown, status = 200, sMaxAge = 60): Response {
 // (optionally) a Cloudflare dashboard rate-limit rule; this stops a single
 // hot client from hammering one isolate's origin path.
 const buckets = new Map<string, { tokens: number; ts: number }>();
-const RATE = 60;        // requests
+const RATE = 60;
 const WINDOW_MS = 60_000;
 
 function rateLimited(req: Request): boolean {
@@ -159,7 +181,7 @@ function rateLimited(req: Request): boolean {
   if (!b) { b = { tokens: RATE, ts: now }; buckets.set(ip, b); }
   b.tokens = Math.min(RATE, b.tokens + ((now - b.ts) / WINDOW_MS) * RATE);
   b.ts = now;
-  if (buckets.size > 5000) buckets.clear(); // crude memory cap
+  if (buckets.size > 5000) buckets.clear();
   if (b.tokens < 1) return true;
   b.tokens -= 1;
   return false;

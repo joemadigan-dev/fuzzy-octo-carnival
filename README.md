@@ -2,12 +2,14 @@
 
 A public, single-screen wall of live macro KPIs on Cloudflare Workers + D1.
 Dense tiles — big number, green/red directional state, inline sparkline —
-grouped into labelled clusters, with a transparent, backtested composite
-regime signal. Runs permanently on the Cloudflare free tier.
+grouped into labelled clusters, with THE BAROMETER: a transparent,
+backtested, two-layer regime signal. Runs permanently on the Cloudflare
+free tier.
 
-**Phase 1 — "The Four Bodies":** WTI, gold, broad dollar, 10Y nominal, 10Y
-real, plus three derived tiles (gold/oil ratio, gold↔real-yield 60d
-correlation, WTI↔DXY 60d correlation).
+**Clusters (53 tiles):** The Four Bodies (oil/gold/dollar/rates) · Credit
+stress · Funding & liquidity · Sentiment & positioning · Trend, breadth &
+rotation · Thesis trackers (dated Hunter forecasts, visually attributed as
+forecasts, never confusable with market data).
 
 ## Architecture in one paragraph
 
@@ -149,20 +151,58 @@ redundantly (▲/▼ glyph + explicit sign), never colour alone.
 That's all — KPIs reference sources by id; fetch logic never changes when
 KPIs are added.
 
-## The composite signal
+## THE BAROMETER
 
-A **regime state, not an order**: `RISK-ON / NEUTRAL / CAUTION / STRESS`.
+Two readings, displayed together, **never summed**:
 
-- Every input is z-scored against its own trailing distribution (2y / 5y
-  windows, toggleable in the UI); `score = Σ weight·sign·z`.
-- Weights, signs, thresholds and hysteresis live in
-  `src/registry/signal.ts` — config, not code. Tune freely.
-- A threshold breach must persist 3 consecutive sessions before the state
-  flips (hysteresis).
-- Clicking the signal reveals every input, its z, weight and contribution;
-  the full backtest since 2015 (it flagged March 2020 as STRESS by Mar 17;
-  2022 reads NEUTRAL/CAUTION — shown as-is, flattering or not); and an
-  append-only regime change log with the causing inputs.
+- **PRESSURE** — is stress arriving now? Credit, funding, volatility
+  structure, the Four Bodies. Falling pressure = deteriorating conditions.
+  Regimes off a real barometer face: `SET FAIR / FAIR / CHANGE /
+  UNSETTLED / STORM`.
+- **ALTITUDE** — how far is there to fall? Sentiment, trend extension,
+  leverage/valuation, breadth. High altitude is a state, not an order —
+  melt-ups end *at* maximum altitude. Regimes: `LOW / MODERATE / HIGH /
+  EXTREME`.
+
+Weights apply to **sub-indices**, not raw inputs (`src/registry/signal.ts`);
+each sub-index is built from its members' z-scores (membership, sign, and
+within-sub weight live on the KPI via `subIndex`/`subSign`/`subWeight`),
+then itself z-normalised before entering the layer — so no series can
+dominate through duplication. The Phase 1 composite had 65% of its weight
+touching gold or oil; the Four Bodies now carry 15% of one layer.
+
+- z windows: 2y / 5y (toggleable), scaled to each series' native frequency.
+- 3-session hysteresis on every regime flip.
+- **Divergence** — high altitude with falling pressure, the configuration
+  that precedes busts — is flagged in the bezel, shaded on the backtest,
+  and logged as episodes.
+- The full backtest of BOTH layers renders on-page, including where each
+  was wrong.
+
+**Diagnostics (on-page, load-bearing):** the pairwise correlation matrix
+of every z-scored input (pairs |ρ| ≥ 0.7 flagged in red) and a
+leave-one-out table — the full regime history recomputed without each
+input, showing the % of days the history changes. Near-zero means the
+input is decorative and the weights are lying about what drives the
+signal.
+
+## Source caveats (verified, honest maximums)
+
+- **ICE BofA spreads on FRED** (HY/CCC/BB/IG OAS) are licensed as a rolling
+  ~3-year window — deeper history is not freely available anywhere, so the
+  credit backtest starts 2023 and accumulates from here. Pre-2023 Pressure
+  history rests on the other 65% of layer weight (coverage renormalises).
+- **AAII and CBOE endpoints hard-block non-browser clients** — per the
+  no-stub rule, CNN Fear & Greed stands in for the survey read and its
+  `put_call_options` series carries the real CBOE-derived put/call data
+  (~1y of history per fetch; the wall accumulates the rest).
+- **NAAIM** is scraped from the chart JSON embedded in naaim.org's own
+  page, which lags the live survey by weeks — the tile shows STALE with
+  its as-of date rather than pretending. Bear-capitulation inherits that
+  honesty.
+- **stooq blocks Cloudflare egress IPs** — gold arrives via the declared
+  yahoo fallback (GC=F). yahoo's `^VIX3M` history has holes, so VIX3M is
+  FRED `VXVCLS` primary with yahoo as fallback.
 
 ## Operations notes
 

@@ -2,7 +2,7 @@
 // Runs in the cron job only.
 
 import type { Point } from '../sources/types.ts';
-import type { KpiDef } from '../registry/kpis.ts';
+import { defaultStaleDays, type KpiDef } from '../registry/kpis.ts';
 import { downsample, isoDaysAgo, valueOnOrBefore } from './stats.ts';
 
 export const TIMEFRAMES = ['d', 'w', 'm', 'y', 'y5'] as const;
@@ -27,6 +27,8 @@ export interface WallStateRow {
   status: 'ok' | 'stale' | 'error';
   status_detail: string | null;
   last_success_at: string | null;
+  /** Named state chip, e.g. IGV vs its H&S levels, capitulation trigger. */
+  flag: string | null;
 }
 
 const SPARK_MAX = 60;
@@ -98,9 +100,11 @@ export function buildWallState(def: KpiDef, points: Point[], opts: BuildOpts): W
     }
   }
 
-  // Staleness: a daily macro series legitimately pauses over weekends and
-  // holidays; beyond the allowance the number must not present as current.
-  const staleAfter = def.staleAfterDays ?? (def.refresh === 'intraday' ? 4 : 6);
+  // Staleness: a daily series pauses over weekends and holidays, a weekly
+  // one publishes in arrears, a quarterly one is fresh at 45 days old —
+  // allowances are per-frequency (see defaultStaleDays), and beyond them
+  // the number must not present as current.
+  const staleAfter = defaultStaleDays(def);
   let status: WallStateRow['status'] = 'ok';
   let status_detail: string | null = null;
 
@@ -121,6 +125,18 @@ export function buildWallState(def: KpiDef, points: Point[], opts: BuildOpts): W
     }
   }
 
+  // named state flags
+  let flag: string | null = null;
+  if (latest && def.flagLevels) {
+    const { shoulder, top } = def.flagLevels;
+    flag = latest.value >= top ? `BROKE >${top}`
+      : latest.value >= shoulder ? `AT ${shoulder}–${top}`
+      : `< ${shoulder}`;
+  }
+  if (latest && def.derive?.type === 'capitulation' && latest.value >= 90) {
+    flag = 'CAPITULATION';
+  }
+
   return {
     series_id: def.id,
     computed_at: opts.nowIso,
@@ -132,5 +148,6 @@ export function buildWallState(def: KpiDef, points: Point[], opts: BuildOpts): W
     status,
     status_detail,
     last_success_at: opts.fetchOk ? opts.nowIso : (opts.prevLastSuccessAt ?? null),
+    flag,
   };
 }

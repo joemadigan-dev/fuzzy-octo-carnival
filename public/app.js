@@ -1,6 +1,7 @@
 /* THE WALL — client. Polls /api/wall every 60s, diffs, animates the tick.
    All timeframes arrive in one payload, so the D/W/M/Y/5Y flip is instant
-   and client-side. No frameworks. */
+   and client-side. Barometer detail + diagnostics load lazily from
+   /api/barometer. No frameworks. */
 
 (() => {
   'use strict';
@@ -8,14 +9,15 @@
   const POLL_MS = 60_000;
   const TF_LABEL = { d: '1D', w: '1W', m: '1M', y: '1Y', y5: '5Y' };
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const INK = '#17191c', MUTED = '#5f635d', GRID = '#c9cbc3';
 
   let wall = null;          // last /api/wall payload
-  let signalDetail = null;  // last /api/signal payload (lazy)
+  let baro = null;          // last /api/barometer payload (lazy)
   let tf = 'd';
   let zwin = '2y';
-  let expandedTile = null;  // kpi id
+  let expandedTile = null;
   const collapsed = new Set();
-  const charts = new Map(); // kpi id -> uPlot
+  const charts = new Map();
   let backtestPlot = null;
 
   const $ = (id) => document.getElementById(id);
@@ -31,7 +33,7 @@
     const n = fmtNum(v, k.decimals);
     return k.unitPrefix
       ? `<span class="unit">${k.unit}</span>${n}`
-      : `${n}<span class="unit">${k.unit ? ' ' + k.unit : ''}</span>`;
+      : `${n}<span class="unit">${k.unit ? ' ' + k.unit : ''}</span>`;
   }
 
   // direction is encoded three times: glyph, explicit sign, colour class
@@ -46,12 +48,10 @@
   }
 
   function tickerClass(k, dirState) {
-    // three-mode direction semantics: what colour does this movement earn?
     const d = dirState || 'flat';
     if (d === 'flat') return 'flat';
-    if (k.direction === 'neutral') return d;                 // green up / red down, no judgement
-    if (k.direction === 'up_is_good') return d;              // up = green
-    return d === 'up' ? 'down' : 'up';                       // down_is_good: invert colour
+    if (k.direction === 'neutral' || k.direction === 'up_is_good') return d;
+    return d === 'up' ? 'down' : 'up'; // down_is_good: invert colour
   }
 
   // ── sparkline (inline SVG, shape only) ───────────────────────────────
@@ -82,16 +82,16 @@
     const dirCls = tickerClass(k, k.dir?.[tf]);
     const c = fmtChange(k, chg);
     const cls = tickerClass(k, chg && (chg.abs > 0 ? 'up' : chg.abs < 0 ? 'down' : 'flat'));
-    const badge = k.status === 'ok' ? '' :
-      `<span class="tile-badge">${k.status === 'stale' ? 'STALE' : 'ERR'}</span>`;
-    const ts = k.latestDate
-      ? `as of ${k.latestDate}`
-      : 'no data';
+    const badges = [];
+    if (k.status !== 'ok') badges.push(`<span class="tile-badge">${k.status === 'stale' ? 'STALE' : 'ERR'}</span>`);
+    if (k.flag) badges.push(`<span class="tile-badge flagchip">${k.flag}</span>`);
+    const ts = (k.latestDate ? `as of ${k.latestDate}` : 'no data')
+      + (k.deadline ? ` · by ${k.deadline}` : '');
     const detail = (k.status !== 'ok' && k.statusDetail)
       ? `<div class="tile-err">${escapeHtml(k.statusDetail)}</div>` : '';
     return `
-      <div class="tile-label"><span>${k.label}</span>${badge}</div>
-      <div class="tile-num" data-raw="${k.latest ?? ''}">${fmtValue(k, k.latest)}</div>
+      <div class="tile-label"><span>${k.label}</span><span class="badges">${badges.join('')}</span></div>
+      <div class="tile-num">${fmtValue(k, k.latest)}</div>
       <div class="tile-chg ${c.cls === 'flat' ? 'flat' : cls}">${c.html}</div>
       ${detail}
       <div class="tile-spark">${sparkSvg(k.sparks?.[tf], dirCls)}</div>
@@ -106,13 +106,14 @@
       const kpis = wall.kpis.filter((k) => k.cluster === cluster.id);
       if (!kpis.length) continue;
       const sec = document.createElement('section');
-      sec.className = 'cluster' + (collapsed.has(cluster.id) ? ' collapsed' : '');
+      sec.className = 'cluster' + (collapsed.has(cluster.id) ? ' collapsed' : '') + (cluster.attribution ? ' attributed' : '');
       sec.dataset.cluster = cluster.id;
 
       const head = document.createElement('div');
       head.className = 'cluster-head';
-      head.innerHTML = `<h2>${cluster.label}</h2>
-        <button class="cluster-toggle" aria-expanded="${!collapsed.has(cluster.id)}">
+      head.innerHTML = `<h2>${cluster.label}</h2>`
+        + (cluster.attribution ? `<span class="attribution">${cluster.attribution}</span>` : '')
+        + `<button class="cluster-toggle" aria-expanded="${!collapsed.has(cluster.id)}">
           ${collapsed.has(cluster.id) ? '[ EXPAND ]' : '[ COLLAPSE ]'}</button>`;
       head.querySelector('.cluster-toggle').addEventListener('click', () => {
         collapsed.has(cluster.id) ? collapsed.delete(cluster.id) : collapsed.add(cluster.id);
@@ -120,7 +121,6 @@
       });
       sec.appendChild(head);
 
-      // one-line summary strip for collapsed clusters
       const strip = document.createElement('div');
       strip.className = 'cluster-strip';
       strip.innerHTML = kpis.map((k) => {
@@ -143,7 +143,7 @@
         t.setAttribute('aria-expanded', String(expandedTile === k.id));
         t.setAttribute('aria-label',
           `${k.label}: ${k.latest === null ? 'no data' : fmtNum(k.latest, k.decimals) + ' ' + k.unit}`
-          + (k.status !== 'ok' ? `, ${k.status}` : '') + '. Toggle full chart.');
+          + (k.status !== 'ok' ? `, ${k.status}` : '') + (k.flag ? `, ${k.flag}` : '') + '. Toggle full chart.');
         t.innerHTML = tileHtml(k);
         t.addEventListener('click', () => toggleExpand(k.id));
         grid.appendChild(t);
@@ -154,7 +154,7 @@
     wallEl.replaceChildren(frag);
     if (expandedTile) mountChart(expandedTile);
     renderBezel();
-    renderSignalHead();
+    renderBaroHead();
   }
 
   function renderBezel() {
@@ -162,12 +162,24 @@
     $('last-run').textContent = lastRun
       ? `data ${lastRun.toISOString().slice(0, 16).replace('T', ' ')}Z`
       : 'data: none yet';
-    const s = wall?.signal?.[zwin];
-    const chip = $('regime-chip');
-    chip.dataset.regime = s?.regime ?? '';
-    $('regime-name').textContent = s?.regime ?? 'NO SIGNAL';
-    $('regime-score').textContent = s?.score !== null && s?.score !== undefined ? s.score.toFixed(2) : '';
+
+    const p = wall?.barometer?.pressure?.[zwin];
+    const a = wall?.barometer?.altitude?.[zwin];
+    setChip('chip-pressure', 'chip-pressure-v', p, pressureTone(p?.regime));
+    setChip('chip-altitude', 'chip-altitude-v', a, altitudeTone(a?.regime));
+    $('chip-divergence').hidden = !(wall?.barometer?.divergence?.[zwin]);
   }
+
+  function setChip(chipId, valId, d, tone) {
+    $(chipId).dataset.tone = tone;
+    $(valId).textContent = d?.regime
+      ? `${d.regime} ${d.score !== null && d.score !== undefined ? (d.score > 0 ? '+' : '') + d.score.toFixed(2) : ''}`
+      : '—';
+  }
+
+  // tone: 'good' | '' | 'bad' — the only chroma on the page
+  function pressureTone(r) { return r === 'SET FAIR' || r === 'FAIR' ? 'good' : r === 'UNSETTLED' || r === 'STORM' ? 'bad' : ''; }
+  function altitudeTone(r) { return r === 'EXTREME' ? 'bad' : ''; } // high altitude is a state, not an alarm
 
   // ── expand-in-place chart ────────────────────────────────────────────
   function toggleExpand(id) {
@@ -191,16 +203,11 @@
         width: w, height: 240,
         scales: { x: { time: true } },
         axes: [
-          { stroke: '#5f635d', grid: { stroke: '#c9cbc3', width: 1 }, ticks: { stroke: '#b6b8b0' },
-            font: '10px "Spline Sans Mono", monospace' },
-          { stroke: '#5f635d', grid: { stroke: '#c9cbc3', width: 1 }, ticks: { stroke: '#b6b8b0' },
-            font: '10px "Spline Sans Mono", monospace',
+          { stroke: MUTED, grid: { stroke: GRID, width: 1 }, ticks: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace' },
+          { stroke: MUTED, grid: { stroke: GRID, width: 1 }, ticks: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace',
             values: (u, splits) => splits.map((v) => v.toLocaleString('en-US', { maximumFractionDigits: body.decimals })) },
         ],
-        series: [
-          {},
-          { label: body.label, stroke: '#17191c', width: 1.5, points: { show: false } },
-        ],
+        series: [{}, { label: body.label, stroke: INK, width: 1.5, points: { show: false } }],
         legend: { show: false },
         cursor: { y: false },
       }, [ts, vs], host);
@@ -220,15 +227,13 @@
       wall = next;
       if (initial || !prev) { render(); return; }
 
-      // diff: update changed tiles in place, pulse the number
       const prevById = new Map(prev.kpis.map((k) => [k.id, k]));
-      let structural = false;
+      let structural = next.kpis.length !== prev.kpis.length;
       for (const k of next.kpis) {
         const p = prevById.get(k.id);
-        if (!p) { structural = true; break; }
-        if (p.status !== k.status) structural = true;
+        if (!p || p.status !== k.status || p.flag !== k.flag) { structural = true; break; }
       }
-      if (structural || next.kpis.length !== prev.kpis.length) { render(); return; }
+      if (structural) { render(); return; }
 
       for (const k of next.kpis) {
         const p = prevById.get(k.id);
@@ -237,15 +242,13 @@
         if (p.latest !== k.latest || JSON.stringify(p.changes?.[tf]) !== JSON.stringify(k.changes?.[tf])) {
           tileEl.innerHTML = tileHtml(k);
           if (!REDUCED && p.latest !== k.latest) {
-            const numEl = tileEl.querySelector('.tile-num');
-            numEl.classList.add('ticked');
+            tileEl.querySelector('.tile-num').classList.add('ticked');
           }
         }
       }
       renderBezel();
-      renderSignalHead();
-    } catch (e) {
-      // network failure: leave the wall as-is; stamp goes quietly stale
+      renderBaroHead();
+    } catch {
       $('last-run').textContent = `poll failed ${new Date().toISOString().slice(11, 16)}Z`;
     }
   }
@@ -260,44 +263,52 @@
     }
     if (!REDUCED) {
       wallEl.classList.remove('tf-flipping');
-      void wallEl.offsetWidth; // restart animation
+      void wallEl.offsetWidth;
       wallEl.classList.add('tf-flipping');
     }
     render();
   });
 
-  // ── composite signal panel ───────────────────────────────────────────
-  function renderSignalHead() {
-    const s = wall?.signal?.[zwin];
-    const el = $('sig-regime');
-    el.dataset.regime = s?.regime ?? '';
-    el.textContent = s?.regime ?? 'NOT COMPUTED';
-    $('sig-score').textContent = s?.score !== null && s?.score !== undefined
-      ? `score ${s.score.toFixed(2)} · thresholds −0.50 / +0.50 / +1.25 · 3-day hysteresis` : '';
-    if ($('signal-panel').classList.contains('open')) renderSignalBody();
+  // ── THE BAROMETER panel ──────────────────────────────────────────────
+  function kpiLabel(id) {
+    const k = wall?.kpis.find((x) => x.id === id);
+    return k ? k.label : id.toUpperCase().replaceAll('_', ' ');
   }
 
-  async function openSignal() {
+  function renderBaroHead() {
+    const p = wall?.barometer?.pressure?.[zwin];
+    const a = wall?.barometer?.altitude?.[zwin];
+    const ph = $('head-pressure'), ah = $('head-altitude');
+    ph.textContent = p?.regime ? `PRESSURE ${p.regime}` : 'PRESSURE —';
+    ah.textContent = a?.regime ? `ALTITUDE ${a.regime}` : 'ALTITUDE —';
+    ph.dataset.tone = pressureTone(p?.regime);
+    ah.dataset.tone = altitudeTone(a?.regime);
+    if ($('signal-panel').classList.contains('open')) renderBaroBody();
+  }
+
+  async function openBaro() {
     const panel = $('signal-panel');
     const open = panel.classList.toggle('open');
     $('sig-disclose').setAttribute('aria-expanded', String(open));
     $('signal-body').hidden = !open;
-    $('sig-disclose').textContent = open ? 'HIDE ▴' : 'SHOW INPUTS + BACKTEST ▾';
+    $('sig-disclose').textContent = open ? 'HIDE ▴' : 'SHOW GAUGES + BACKTEST + DIAGNOSTICS ▾';
     if (open) {
-      if (!signalDetail) {
+      if (!baro) {
         try {
-          const res = await fetch('/api/signal');
-          if (res.ok) signalDetail = await res.json();
-        } catch { /* renderSignalBody shows what it can */ }
+          const res = await fetch('/api/barometer');
+          if (res.ok) baro = await res.json();
+        } catch { /* body renders what it can */ }
       }
-      renderSignalBody();
+      renderBaroBody();
     }
   }
-  $('sig-disclose').addEventListener('click', openSignal);
-  $('regime-chip').addEventListener('click', () => {
-    if (!$('signal-panel').classList.contains('open')) openSignal();
-    $('signal-panel').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth' });
-  });
+  $('sig-disclose').addEventListener('click', openBaro);
+  for (const id of ['chip-pressure', 'chip-altitude', 'chip-divergence']) {
+    $(id).addEventListener('click', () => {
+      if (!$('signal-panel').classList.contains('open')) openBaro();
+      $('signal-panel').scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth' });
+    });
+  }
 
   $('zwin-switch').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-zw]');
@@ -307,96 +318,155 @@
       b.setAttribute('aria-pressed', String(b.dataset.zw === zwin));
     }
     renderBezel();
-    renderSignalHead();
+    renderBaroHead();
   });
 
-  function kpiLabel(id) {
-    const k = wall?.kpis.find((x) => x.id === id);
-    return k ? k.label : id;
+  function gaugeHtml(layerId, title, subtitle, tone) {
+    const d = baro?.barometer?.[layerId]?.[zwin];
+    if (!d) return `<h3>${title}</h3><p class="sig-note">not computed yet</p>`;
+    const rows = (d.subs ?? []).map((s) => {
+      const subRow = `
+        <tr class="sub-row">
+          <td>${s.label}</td>
+          <td>${(s.weight * 100).toFixed(0)}%</td>
+          <td>${s.z === null ? '—' : s.z.toFixed(2)}</td>
+          <td class="${s.contribution > 0 ? (layerId === 'pressure' ? 'neg' : 'pos') : s.contribution < 0 ? (layerId === 'pressure' ? 'pos' : 'neg') : ''}">
+            ${s.contribution === null ? '—' : (s.contribution > 0 ? '+' : '') + s.contribution.toFixed(2)}</td>
+        </tr>`;
+      const inputRows = (s.inputs ?? []).map((i) => `
+        <tr class="input-row">
+          <td>· ${kpiLabel(i.id)} <span class="in-meta">${i.sign > 0 ? '+' : '−'}·${(i.weight * 100).toFixed(0)}%${i.asOf ? ' · ' + i.asOf : ''}</span></td>
+          <td></td>
+          <td>${i.z === null ? '—' : i.z.toFixed(2)}</td>
+          <td></td>
+        </tr>`).join('');
+      return subRow + inputRows;
+    }).join('');
+    return `
+      <h3>${title} <span class="g-regime" data-tone="${tone}">${d.regime ?? '—'}</span>
+        <span class="g-score">${d.score === null ? '' : (d.score > 0 ? '+' : '') + d.score.toFixed(2)}</span></h3>
+      <p class="sig-note">${subtitle}</p>
+      <table class="sig-inputs">
+        <tr><th>SUB-INDEX / INPUT</th><th>WT</th><th>Z</th><th>CONTRIB</th></tr>
+        ${rows}
+      </table>`;
   }
 
-  function renderSignalBody() {
-    const det = signalDetail?.detail?.[zwin] ?? wall?.signal?.[zwin];
-    const tbl = $('sig-inputs-table');
-    if (!det) { tbl.innerHTML = '<tr><td>signal not computed yet</td></tr>'; return; }
-    tbl.innerHTML = `
-      <tr><th>INPUT</th><th>VALUE</th><th>Z</th><th>W×SGN</th><th>CONTRIB</th></tr>
-      ${det.inputs.map((i) => `
-        <tr>
-          <td>${kpiLabel(i.id)}<div class="rationale">${escapeHtml(i.rationale)}</div></td>
-          <td>${i.value === null ? '—' : i.value.toFixed(2)}</td>
-          <td>${i.z === null ? '—' : i.z.toFixed(2)}</td>
-          <td>${(i.weight * 100).toFixed(0)}%·${i.sign > 0 ? '+' : '−'}</td>
-          <td class="${i.contribution > 0 ? 'pos' : i.contribution < 0 ? 'neg' : ''}">
-            ${i.contribution === null ? '—' : (i.contribution > 0 ? '+' : '') + i.contribution.toFixed(2)}</td>
-        </tr>`).join('')}
-      <tr><td><b>COMPOSITE</b></td><td></td><td></td><td>100%</td>
-        <td><b>${det.score === null ? '—' : (det.score > 0 ? '+' : '') + det.score.toFixed(2)}</b></td></tr>`;
-
+  function renderBaroBody() {
+    $('divergence-note').hidden = !(wall?.barometer?.divergence?.[zwin]);
+    const p = baro?.barometer?.pressure?.[zwin];
+    const a = baro?.barometer?.altitude?.[zwin];
+    $('gauge-pressure').innerHTML = gaugeHtml('pressure', 'PRESSURE',
+      'Is stress arriving now? Fast, coincident-to-leading. Falling pressure = deteriorating conditions. Thresholds +1.0 / +0.3 / −0.3 / −1.0, 3-day hysteresis.',
+      pressureTone(p?.regime));
+    $('gauge-altitude').innerHTML = gaugeHtml('altitude', 'ALTITUDE',
+      'How far is there to fall? Slow, structural. Melt-ups end AT maximum altitude — high is a state, not an order. Thresholds −0.5 / +0.5 / +1.25.',
+      altitudeTone(a?.regime));
     renderBacktest();
     renderChangeLog();
+    renderDiagnostics();
   }
 
   function renderBacktest() {
     const host = $('backtest-chart');
-    if (!signalDetail?.history?.length) { host.textContent = 'backtest loads from /api/signal'; return; }
+    const h = baro?.history;
+    if (!h?.t?.length) { host.textContent = 'backtest loads from /api/barometer'; return; }
     if (backtestPlot) { backtestPlot.destroy(); backtestPlot = null; }
-    const rows = signalDetail.history;
-    const scoreKey = zwin === '2y' ? 'score_2y' : 'score_5y';
-    const ts = [], vs = [];
-    for (const r of rows) {
-      if (r[scoreKey] === null) continue;
-      ts.push(Math.floor(Date.parse(r.date + 'T00:00:00Z') / 1000));
-      vs.push(r[scoreKey]);
-    }
-    if (ts.length < 2) { host.textContent = 'not enough history yet'; return; }
-    const w = host.clientWidth || 500;
+    const pKey = zwin === '2y' ? 'p_2y' : 'p_5y';
+    const aKey = zwin === '2y' ? 'a_2y' : 'a_5y';
+    const dKey = zwin === '2y' ? 'div_2y' : 'div_5y';
+    const w = host.clientWidth || 900;
     backtestPlot = new uPlot({
-      width: w, height: 200,
+      width: w, height: 220,
       scales: { x: { time: true } },
       axes: [
-        { stroke: '#5f635d', grid: { stroke: '#c9cbc3' }, font: '10px "Spline Sans Mono", monospace' },
-        { stroke: '#5f635d', grid: { stroke: '#c9cbc3' }, font: '10px "Spline Sans Mono", monospace' },
+        { stroke: MUTED, grid: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace' },
+        { stroke: MUTED, grid: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace' },
       ],
-      series: [{}, { label: 'score', stroke: '#17191c', width: 1.2, points: { show: false } }],
-      legend: { show: false },
+      series: [
+        {},
+        { label: 'PRESSURE', stroke: INK, width: 1.4, points: { show: false } },
+        { label: 'ALTITUDE', stroke: MUTED, width: 1.2, dash: [4, 3], points: { show: false } },
+      ],
+      legend: { show: true },
       cursor: { y: false },
       hooks: {
         drawClear: [(u) => {
-          // threshold bands: grey for caution zone boundaries, red/green edges
+          // shade divergence episodes — the configuration that precedes busts
           const ctx = u.ctx;
-          const y = (v) => u.valToPos(v, 'y', true);
-          const x0 = u.bbox.left, x1 = u.bbox.left + u.bbox.width;
+          const div = h[dKey];
           ctx.save();
-          ctx.fillStyle = 'rgba(220,73,86,0.08)';
-          ctx.fillRect(x0, u.bbox.top, x1 - x0, Math.max(0, y(1.25) - u.bbox.top));
-          ctx.fillStyle = 'rgba(11,100,51,0.07)';
-          ctx.fillRect(x0, y(-0.5), x1 - x0, Math.max(0, u.bbox.top + u.bbox.height - y(-0.5)));
-          ctx.strokeStyle = '#b6b8b0';
-          ctx.setLineDash([3, 3]);
-          for (const t of [-0.5, 0.5, 1.25]) {
-            ctx.beginPath(); ctx.moveTo(x0, y(t)); ctx.lineTo(x1, y(t)); ctx.stroke();
+          ctx.fillStyle = 'rgba(220,73,86,0.14)';
+          let start = null;
+          for (let i = 0; i <= div.length; i++) {
+            const on = i < div.length && div[i] === 1;
+            if (on && start === null) start = i;
+            if (!on && start !== null) {
+              const x0 = u.valToPos(h.t[start], 'x', true);
+              const x1 = u.valToPos(h.t[Math.min(i, div.length - 1)], 'x', true);
+              ctx.fillRect(x0, u.bbox.top, Math.max(1.5, x1 - x0), u.bbox.height);
+              start = null;
+            }
           }
           ctx.restore();
         }],
       },
-    }, [ts, vs], host);
+    }, [h.t, h[pKey], h[aKey]], host);
   }
 
   function renderChangeLog() {
     const tbl = $('sig-log-table');
-    const changes = (signalDetail?.changes ?? []).filter((c) => c.window === zwin);
+    const changes = (baro?.changes ?? []).filter((c) => c.window === zwin);
     if (!changes.length) { tbl.innerHTML = '<tr><td>no regime changes recorded</td></tr>'; return; }
     tbl.innerHTML = `
-      <tr><th>DATE</th><th>TRANSITION</th><th>SCORE</th><th>TOP DRIVERS</th></tr>
+      <tr><th>DATE</th><th>LAYER</th><th>TRANSITION</th><th>SCORE</th><th>TOP DRIVERS (SUB-INDICES)</th></tr>
       ${changes.map((c) => `
         <tr>
           <td>${c.date}</td>
-          <td>${c.from_regime} → <span class="to-${c.to_regime}">${c.to_regime}</span></td>
+          <td>${c.layer.toUpperCase()}</td>
+          <td>${c.from_regime} → <span class="to-${c.to_regime.replaceAll(' ', '_')}">${c.to_regime}</span></td>
           <td>${c.score.toFixed(2)}</td>
           <td class="drivers">${c.drivers.slice(0, 3).map((d) =>
             `${kpiLabel(d.id)} z=${d.z.toFixed(1)} (${d.contribution > 0 ? '+' : ''}${d.contribution.toFixed(2)})`).join(' · ')}</td>
         </tr>`).join('')}`;
+  }
+
+  function renderDiagnostics() {
+    const diag = baro?.diagnostics;
+    if (!diag) return;
+
+    // correlation matrix — compact heat table, flagged pairs in signal red
+    const { ids, matrix } = diag.corr;
+    const flaggedSet = new Set(diag.corr.flagged.flatMap((f) => [`${f.a}|${f.b}`, `${f.b}|${f.a}`]));
+    const short = (id) => id.length > 10 ? id.slice(0, 10) : id;
+    $('corr-matrix').innerHTML = `
+      <tr><th></th>${ids.map((id) => `<th class="vert"><span>${short(id)}</span></th>`).join('')}</tr>
+      ${ids.map((a, i) => `<tr><th>${short(a)}</th>${ids.map((b, j) => {
+        const r = matrix[i][j];
+        if (i === j) return '<td class="diag-self">·</td>';
+        if (r === null) return '<td>—</td>';
+        const flag = flaggedSet.has(`${a}|${b}`);
+        const shade = Math.round(Math.abs(r) * 60);
+        return `<td class="${flag ? 'corr-flag' : ''}" style="background:rgba(23,25,28,0.${String(shade).padStart(2, '0')})">${(r).toFixed(1).replace('0.', '.')}</td>`;
+      }).join('')}</tr>`).join('')}`;
+    $('corr-flagged').innerHTML = diag.corr.flagged.length
+      ? 'FLAGGED: ' + diag.corr.flagged.map((f) => `${kpiLabel(f.a)} × ${kpiLabel(f.b)} ρ=${f.r.toFixed(2)}`).join(' · ')
+      : 'no pair above 0.7';
+
+    $('loo-table').innerHTML = `
+      <tr><th>INPUT</th><th>LAYER</th><th>% DAYS CHANGED</th><th>SCORE Δ NOW</th></tr>
+      ${diag.loo.map((l) => `
+        <tr>
+          <td>${kpiLabel(l.id)}</td>
+          <td>${l.layer.toUpperCase()}</td>
+          <td>${l.pctDaysChanged.toFixed(1)}%</td>
+          <td>${l.scoreDelta === null ? '—' : (l.scoreDelta > 0 ? '+' : '') + l.scoreDelta.toFixed(2)}</td>
+        </tr>`).join('')}`;
+
+    const eps = (diag.divergenceEpisodes ?? []).filter((e) => e.window === zwin);
+    $('div-table').innerHTML = eps.length
+      ? `<tr><th>START</th><th>END</th></tr>` + eps.map((e) => `<tr><td>${e.start}</td><td>${e.end}</td></tr>`).join('')
+      : '<tr><td>none in the backtest window</td></tr>';
   }
 
   // ── clock ────────────────────────────────────────────────────────────

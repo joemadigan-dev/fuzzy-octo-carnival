@@ -23,14 +23,20 @@ import { KPIS, BACKFILL_START } from '../src/registry/kpis.ts';
 import { fredCsvUrl, parseFredCsv } from '../src/sources/fred.ts';
 import { stooqCsvUrl, parseStooqCsv } from '../src/sources/stooq.ts';
 import { yahooChartUrl, parseYahooChart } from '../src/sources/yahoo.ts';
+import { parseCnnGraphdata } from '../src/sources/cnn.ts';
+import { parseNaaimChart } from '../src/sources/naaim.ts';
 import type { Point } from '../src/sources/types.ts';
 
 const DEV_URL = process.env.DEV_URL ?? 'http://localhost:8787';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'change-me';
 
-function curl(url: string): string {
-  return execFileSync('curl', ['-sS', '-m', '60', '-H', 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36', url],
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+function curl(url: string, headers: string[] = []): string {
+  const args = ['-sS', '-m', '60', '-H', `user-agent: ${UA}`];
+  for (const h of headers) args.push('-H', h);
+  args.push(url);
+  return execFileSync('curl', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
 function fetchPoints(source: string, seriesId: string, from: string, to: string): Point[] {
@@ -38,6 +44,9 @@ function fetchPoints(source: string, seriesId: string, from: string, to: string)
     case 'fred': return parseFredCsv(curl(fredCsvUrl(seriesId, { from, to })), seriesId);
     case 'stooq': return parseStooqCsv(curl(stooqCsvUrl(seriesId, { from, to })), seriesId);
     case 'yahoo': return parseYahooChart(curl(yahooChartUrl(seriesId, { from, to })), seriesId);
+    case 'cnn': return parseCnnGraphdata(curl('https://production.dataviz.cnn.io/index/fearandgreed/graphdata',
+      ['referer: https://www.cnn.com/markets/fear-and-greed', 'origin: https://www.cnn.com', 'accept: application/json']), seriesId);
+    case 'naaim': return parseNaaimChart(curl('https://index.naaim.org/embeddable/chart'));
     default: throw new Error(`unknown source ${source}`);
   }
 }

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>THE WALL</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23101214'/%3E%3Crect x='2' y='9' width='3' height='5' fill='%230b6433'/%3E%3Crect x='6.5' y='5' width='3' height='9' fill='%23e8e9e4'/%3E%3Crect x='11' y='7' width='3' height='7' fill='%23dc4956'/%3E%3C/svg%3E">
-<meta name="description" content="Live macro KPI wall — oil, gold, dollar, rates, and a transparent composite regime signal.">
+<meta name="description" content="Live macro KPI wall — credit, funding, sentiment, trend, and a transparent two-layer regime barometer.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Spline+Sans+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -16,10 +16,14 @@
 
 <header class="bezel">
   <div class="wordmark">THE&nbsp;WALL</div>
-  <button class="regime-chip" id="regime-chip" data-regime="" aria-label="Composite regime — click for signal detail">
-    <span class="dot" aria-hidden="true"></span>
-    <span class="name" id="regime-name">—</span>
-    <span class="score" id="regime-score"></span>
+  <button class="baro-chip" id="chip-pressure" data-tone="" aria-label="Pressure — click for barometer detail">
+    <span class="chip-k">PRESSURE</span><span class="chip-v" id="chip-pressure-v">—</span>
+  </button>
+  <button class="baro-chip" id="chip-altitude" data-tone="" aria-label="Altitude — click for barometer detail">
+    <span class="chip-k">ALTITUDE</span><span class="chip-v" id="chip-altitude-v">—</span>
+  </button>
+  <button class="baro-chip divergence" id="chip-divergence" hidden aria-label="Divergence active — high altitude with low pressure">
+    <span class="chip-v">▲ DIVERGENCE</span>
   </button>
   <div class="bezel-spacer"></div>
   <div class="tf-switch" role="group" aria-label="Timeframe" id="tf-switch">
@@ -39,38 +43,62 @@
   <!-- clusters + tiles rendered by app.js -->
 </main>
 
-<section class="signal-panel" id="signal-panel" aria-label="Composite regime signal">
+<section class="signal-panel" id="signal-panel" aria-label="The Barometer — two-layer regime signal">
   <div class="signal-head">
-    <h2>COMPOSITE REGIME</h2>
-    <span class="sig-regime" id="sig-regime" data-regime="">—</span>
-    <span class="sig-score" id="sig-score"></span>
+    <h2>THE BAROMETER</h2>
+    <span class="sig-regime" id="head-pressure" data-tone="">—</span>
+    <span class="sig-sep">·</span>
+    <span class="sig-regime" id="head-altitude" data-tone="">—</span>
+    <span class="sig-score" id="head-note">pressure: is stress arriving · altitude: how far there is to fall — never summed</span>
     <span class="zwin-switch" role="group" aria-label="z-score window" id="zwin-switch">
       <button data-zw="2y" aria-pressed="true">2Y</button>
       <button data-zw="5y" aria-pressed="false">5Y</button>
     </span>
-    <button class="disclose" id="sig-disclose" aria-expanded="false" aria-controls="signal-body">SHOW INPUTS + BACKTEST ▾</button>
+    <button class="disclose" id="sig-disclose" aria-expanded="false" aria-controls="signal-body">SHOW GAUGES + BACKTEST + DIAGNOSTICS ▾</button>
   </div>
+
   <div class="signal-body" id="signal-body" hidden>
-    <div class="sig-inputs-wrap">
-      <h3>INPUTS — EVERY ONE, WITH ITS WEIGHT AND CONTRIBUTION</h3>
-      <p class="sig-note">Each input is z-scored against its own trailing distribution
-        (window selectable above). score = Σ weight·sign·z. Positive pushes toward
-        STRESS. Regime changes require the threshold breach to persist 3 consecutive
-        sessions (hysteresis). This is a regime state, not an order.</p>
-      <table class="sig-inputs" id="sig-inputs-table"></table>
+    <div class="baro-note" id="divergence-note" hidden>
+      ▲ DIVERGENCE — altitude is high while pressure falls. This is the configuration that precedes a bust. It is not a sell order.
     </div>
+
+    <div class="baro-gauges">
+      <div class="baro-gauge" id="gauge-pressure"></div>
+      <div class="baro-gauge" id="gauge-altitude"></div>
+    </div>
+
     <div class="sig-backtest">
-      <h3>BACKTEST — WHAT THIS COMPOSITE SAID, INCLUDING WHERE IT WAS WRONG</h3>
+      <h3>BACKTEST — BOTH LAYERS, INCLUDING WHERE EACH WAS WRONG · SHADED = DIVERGENCE</h3>
       <div id="backtest-chart"></div>
+      <p class="sig-note">A barometer says pressure is dropping. It does not say when the rain starts, and it does not tell you to sell anything.</p>
     </div>
+
     <div class="sig-log">
       <h3>REGIME CHANGE LOG</h3>
       <div class="sig-log-scroll"><table id="sig-log-table"></table></div>
     </div>
+
+    <div class="sig-diag">
+      <h3>DIAGNOSTICS — IS THE SIGNAL LYING ABOUT WHAT DRIVES IT?</h3>
+      <div class="diag-grid">
+        <div>
+          <h4>INPUT CORRELATION (5Y z) — PAIRS |ρ| ≥ 0.7 FLAGGED</h4>
+          <div class="corr-scroll"><table id="corr-matrix"></table></div>
+          <div id="corr-flagged" class="corr-flagged"></div>
+        </div>
+        <div>
+          <h4>LEAVE-ONE-OUT — % OF DAYS THE REGIME HISTORY CHANGES WITHOUT EACH INPUT</h4>
+          <table id="loo-table"></table>
+          <p class="sig-note">Near-zero means the input is decorative and the weights are lying about what drives the signal.</p>
+          <h4>DIVERGENCE EPISODES</h4>
+          <table id="div-table"></table>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
-<footer class="foot" id="foot">sources: FRED · stooq — refreshed hourly — polls every 60s</footer>
+<footer class="foot" id="foot">sources: FRED · stooq · yahoo · cnn · naaim — refreshed hourly — polls every 60s</footer>
 
 <script src="/vendor/uPlot.iife.min.js"></script>
 <script src="/app.js"></script>
