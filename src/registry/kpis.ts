@@ -82,6 +82,7 @@ export const KPIS: KpiDef[] = [
     decimals: 2,
     direction: 'neutral',
     refresh: 'daily',
+    staleAfterDays: 12, // FRED publishes DTWEXBGS weekly, ~1 week in arrears
     source: 'fred',
     seriesId: 'DTWEXBGS',
   },
@@ -138,6 +139,7 @@ export const KPIS: KpiDef[] = [
     showPct: false,
     direction: 'neutral',
     refresh: 'daily',
+    staleAfterDays: 12, // can only be as fresh as DXY's weekly publication
     derive: { type: 'rolling_corr', a: 'wti', b: 'dxy', window: 60 },
   },
 ];
