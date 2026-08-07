@@ -73,10 +73,12 @@ export const PRESSURE_REGIMES = ['SET FAIR', 'FAIR', 'CHANGE', 'UNSETTLED', 'STO
 export type PressureRegime = (typeof PRESSURE_REGIMES)[number];
 export const PRESSURE_THRESHOLDS = { setFairAt: 1.0, fairAt: 0.3, unsettledBelow: -0.3, stormBelow: -1.0 };
 
-/** Altitude gauge — its own scale, never summed with Pressure. */
-export const ALTITUDE_REGIMES = ['LOW', 'MODERATE', 'HIGH', 'EXTREME'] as const;
+/** Altitude gauge — its own scale, never summed with Pressure. The labels
+ *  communicate STRETCH, not imminence: the wrong reading of a high number
+ *  is "sell now", and the vocabulary should make that misreading harder. */
+export const ALTITUDE_REGIMES = ['GROUNDED', 'CLIMBING', 'HIGH', 'EXTENDED', 'STRATOSPHERIC'] as const;
 export type AltitudeRegime = (typeof ALTITUDE_REGIMES)[number];
-export const ALTITUDE_THRESHOLDS = { lowBelow: -0.5, highAt: 0.5, extremeAt: 1.25 };
+export const ALTITUDE_THRESHOLDS = { groundedBelow: -0.5, highAt: 0.5, extendedAt: 1.0, stratosphericAt: 1.75 };
 
 /** A regime flip must persist this many consecutive sessions. */
 export const HYSTERESIS_DAYS = 3;
@@ -87,6 +89,13 @@ export const DIVERGENCE = {
   altitudeAtLeast: 'HIGH' as AltitudeRegime,
   pressureAtMost: 'UNSETTLED' as PressureRegime,
 };
+
+/** Fixed historical reference marks drawn on both gauge faces. */
+export const GAUGE_REF_DATES = [
+  { label: 'SEP 08', date: '2008-09-15' },
+  { label: 'MAR 20', date: '2020-03-16' },
+  { label: 'SEP 22', date: '2022-09-26' },
+];
 
 /** Diagnostics: pairwise |correlation| above this gets flagged in the UI. */
 export const CORR_FLAG = 0.7;

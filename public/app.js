@@ -13,6 +13,7 @@
 
   let wall = null;          // last /api/wall payload
   let baro = null;          // last /api/barometer payload (lazy)
+  let alerts = null;        // last /api/alerts payload (lazy)
   let tf = 'd';
   let zwin = '2y';
   let expandedTile = null;
@@ -47,11 +48,15 @@
     return { html: `${glyph} ${absTxt}${pctTxt}`, cls: dir };
   }
 
+  // Colour IS the tile's contribution to the Barometer: green = this move
+  // pushes the system toward benign, red = toward storm. The .up class
+  // renders green and .down renders red — here they are colour tokens, not
+  // directions (the arrow glyph carries the actual direction).
   function tickerClass(k, dirState) {
     const d = dirState || 'flat';
     if (d === 'flat') return 'flat';
-    if (k.direction === 'neutral' || k.direction === 'up_is_good') return d;
-    return d === 'up' ? 'down' : 'up'; // down_is_good: invert colour
+    const towardStress = (d === 'up') === ((k.stressSign ?? 1) > 0);
+    return towardStress ? 'down' : 'up';
   }
 
   // ── sparkline (inline SVG, shape only) ───────────────────────────────
@@ -89,8 +94,9 @@
       + (k.deadline ? ` · by ${k.deadline}` : '');
     const detail = (k.status !== 'ok' && k.statusDetail)
       ? `<div class="tile-err">${escapeHtml(k.statusDetail)}</div>` : '';
+    const hover = k.signRationale ? ` title="${escapeHtml(k.signRationale)}"` : '';
     return `
-      <div class="tile-label"><span>${k.label}</span><span class="badges">${badges.join('')}</span></div>
+      <div class="tile-label"${hover}><span>${k.label}</span><span class="badges">${badges.join('')}</span></div>
       <div class="tile-num">${fmtValue(k, k.latest)}</div>
       <div class="tile-chg ${c.cls === 'flat' ? 'flat' : cls}">${c.html}</div>
       ${detail}
@@ -167,7 +173,7 @@
     const a = wall?.barometer?.altitude?.[zwin];
     setChip('chip-pressure', 'chip-pressure-v', p, pressureTone(p?.regime));
     setChip('chip-altitude', 'chip-altitude-v', a, altitudeTone(a?.regime));
-    $('chip-divergence').hidden = !(wall?.barometer?.divergence?.[zwin]);
+    $('chip-divergence').hidden = !(wall?.barometer?.divergence?.[zwin]?.active);
   }
 
   function setChip(chipId, valId, d, tone) {
@@ -179,7 +185,7 @@
 
   // tone: 'good' | '' | 'bad' — the only chroma on the page
   function pressureTone(r) { return r === 'SET FAIR' || r === 'FAIR' ? 'good' : r === 'UNSETTLED' || r === 'STORM' ? 'bad' : ''; }
-  function altitudeTone(r) { return r === 'EXTREME' ? 'bad' : ''; } // high altitude is a state, not an alarm
+  function altitudeTone(r) { return r === 'STRATOSPHERIC' ? 'bad' : ''; } // stretch, not imminence
 
   // ── expand-in-place chart ────────────────────────────────────────────
   function toggleExpand(id) {
@@ -321,6 +327,89 @@
     renderBaroHead();
   });
 
+  // ── gauge face: zones, density, needle, reference marks, tf range ────
+  const ZONES = {
+    pressure: { bounds: [-1.0, -0.3, 0.3, 1.0], labels: ['STORM', 'UNSETTLED', 'CHANGE', 'FAIR', 'SET FAIR'] },
+    altitude: { bounds: [-0.5, 0.5, 1.0, 1.75], labels: ['GROUNDED', 'CLIMBING', 'HIGH', 'EXTENDED', 'STRATOSPHERIC'] },
+  };
+
+  function gaugeSvg(layerId, g, score) {
+    if (!g || score === null || score === undefined) return '';
+    const W = 640, H = 126, L = 14, R = 626;
+    const lo = Math.min(g.hist.min, -2.5), hi = Math.max(g.hist.max, 2.5);
+    const x = (s) => L + ((Math.max(lo, Math.min(hi, s)) - lo) / (hi - lo)) * (R - L);
+    const zones = ZONES[layerId];
+    const parts = [];
+
+    // altitude zones hatched, pressure zones solid — the two faces must not
+    // be mistakable for each other
+    if (layerId === 'altitude') {
+      parts.push(`<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="0" x2="0" y2="5" stroke="#9a9d95" stroke-width="1.1"/></pattern></defs>`);
+    }
+    const edges = [lo, ...zones.bounds, hi];
+    for (let i = 0; i < zones.labels.length; i++) {
+      const x0 = x(edges[i]), x1 = x(edges[i + 1]);
+      // shading darkens toward the storm end (left for pressure, right for altitude)
+      const t = layerId === 'pressure' ? (zones.labels.length - 1 - i) : i;
+      const fill = layerId === 'altitude' ? 'url(#hatch)' : `rgba(23,25,28,${(0.05 + t * 0.075).toFixed(3)})`;
+      parts.push(`<rect x="${x0.toFixed(1)}" y="58" width="${(x1 - x0).toFixed(1)}" height="18" fill="${fill}" stroke="#b6b8b0" stroke-width="0.5"/>`);
+      if (layerId === 'altitude') {
+        parts.push(`<rect x="${x0.toFixed(1)}" y="58" width="${(x1 - x0).toFixed(1)}" height="18" fill="rgba(23,25,28,${(0.03 + t * 0.05).toFixed(3)})"/>`);
+      }
+      const label = zones.labels[i];
+      const cx = (x0 + x1) / 2;
+      parts.push(`<text x="${cx.toFixed(1)}" y="70.5" text-anchor="middle" font-size="8" letter-spacing="0.08em"
+        fill="${t >= 3 ? '#edeee9' : '#5f635d'}" font-family="'Spline Sans Mono',monospace">${label}</text>`);
+    }
+
+    // density of the full score history behind the needle
+    if (g.hist.bins.length) {
+      const n = g.hist.bins.length;
+      const bx = (i) => x(g.hist.min + ((i + 0.5) / n) * (g.hist.max - g.hist.min));
+      const pts = [`${x(g.hist.min).toFixed(1)},56`];
+      for (let i = 0; i < n; i++) pts.push(`${bx(i).toFixed(1)},${(56 - g.hist.bins[i] * 40).toFixed(1)}`);
+      pts.push(`${x(g.hist.max).toFixed(1)},56`);
+      parts.push(`<polyline points="${pts.join(' ')}" fill="rgba(23,25,28,0.10)" stroke="#8b8e88" stroke-width="0.8"/>`);
+    }
+
+    // timeframe hi–lo bracket (where has it BEEN in the selected window)
+    const tfr = g.tfRange?.[tf === 'y5' ? 'y' : tf];
+    if (tfr) {
+      const x0 = x(tfr.lo), x1 = x(tfr.hi);
+      parts.push(`<line x1="${x0.toFixed(1)}" y1="82" x2="${x1.toFixed(1)}" y2="82" stroke="#17191c" stroke-width="2"/>
+        <line x1="${x0.toFixed(1)}" y1="78" x2="${x0.toFixed(1)}" y2="86" stroke="#17191c" stroke-width="1"/>
+        <line x1="${x1.toFixed(1)}" y1="78" x2="${x1.toFixed(1)}" y2="86" stroke="#17191c" stroke-width="1"/>
+        <text x="${((x0 + x1) / 2).toFixed(1)}" y="94" text-anchor="middle" font-size="7.5" fill="#5f635d"
+          font-family="'Spline Sans Mono',monospace">${TF_LABEL[tf]} RANGE</text>`);
+    }
+
+    // fixed historical reference marks: 2008 / 2020 / 2022 / recent peak.
+    // Crisis dates cluster tightly on the altitude face, so labels stagger
+    // onto a second row rather than overprinting each other.
+    const marks = [...(g.refMarks ?? [])].sort((p, q) => p.score - q.score);
+    let lastX = -Infinity, row = 0;
+    for (const m of marks) {
+      const mx = x(m.score);
+      row = mx - lastX < 42 ? (row + 1) % 2 : 0;
+      lastX = mx;
+      const ty = 101 + row * 15;
+      parts.push(`<line x1="${mx.toFixed(1)}" y1="52" x2="${mx.toFixed(1)}" y2="${(ty - 8).toFixed(1)}" stroke="#17191c" stroke-width="0.9" stroke-dasharray="2 2"/>
+        <text x="${mx.toFixed(1)}" y="${ty}" text-anchor="middle" font-size="7.5" fill="#5f635d"
+          font-family="'Spline Sans Mono',monospace">${m.label} <tspan fill="#8b8e88">${m.score.toFixed(1)}</tspan></text>`);
+    }
+
+    // needle
+    const nx = x(score);
+    parts.push(`<line x1="${nx.toFixed(1)}" y1="12" x2="${nx.toFixed(1)}" y2="80" stroke="#17191c" stroke-width="2"/>
+      <path d="M ${(nx - 5).toFixed(1)} 6 L ${(nx + 5).toFixed(1)} 6 L ${nx.toFixed(1)} 14 Z" fill="#17191c"/>`);
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="gauge-svg" role="img"
+      aria-label="${layerId} gauge: score ${score.toFixed(2)}, ${g.percentile === null ? '' : Math.round(g.percentile) + 'th percentile'}">${parts.join('')}</svg>`;
+  }
+
+  const ordinal = (n) => { const v = Math.round(n); const s = ['th', 'st', 'nd', 'rd'], k = v % 100; return v + (s[(k - 20) % 10] || s[k] || s[0]); };
+
   function gaugeHtml(layerId, title, subtitle, tone) {
     const d = baro?.barometer?.[layerId]?.[zwin];
     if (!d) return `<h3>${title}</h3><p class="sig-note">not computed yet</p>`;
@@ -342,29 +431,101 @@
         </tr>`).join('');
       return subRow + inputRows;
     }).join('');
+    const g = d.gauge;
+    const pctTxt = g?.percentile === null || g?.percentile === undefined
+      ? ''
+      : `<span class="g-pct">${ordinal(g.percentile)} pct${g.firstDate ? ' since ' + g.firstDate.slice(0, 4) : ''}</span>`;
     return `
       <h3>${title} <span class="g-regime" data-tone="${tone}">${d.regime ?? '—'}</span>
-        <span class="g-score">${d.score === null ? '' : (d.score > 0 ? '+' : '') + d.score.toFixed(2)}</span></h3>
+        <span class="g-score">${d.score === null ? '' : (d.score > 0 ? '+' : '') + d.score.toFixed(2)}</span>
+        ${pctTxt}</h3>
       <p class="sig-note">${subtitle}</p>
+      ${gaugeSvg(layerId, g, d.score)}
       <table class="sig-inputs">
         <tr><th>SUB-INDEX / INPUT</th><th>WT</th><th>Z</th><th>CONTRIB</th></tr>
         ${rows}
       </table>`;
   }
 
+  // one line naming the current configuration — the actual output of the
+  // two-layer design
+  function divergenceReadout() {
+    const p = baro?.barometer?.pressure?.[zwin];
+    const a = baro?.barometer?.altitude?.[zwin];
+    if (!p || !a) return '';
+    const trend = (t) => t === null || t === undefined ? '' : t > 0.05 ? ' and rising' : t < -0.05 ? ' and falling' : ' and steady';
+    const dv = baro?.divergence?.[zwin] ?? wall?.barometer?.divergence?.[zwin];
+    let tail = 'no divergence';
+    if (dv?.active) {
+      const wks = Math.round(dv.days / 7);
+      tail = `DIVERGENCE holding ${dv.days >= 14 ? wks + ' weeks' : dv.days + ' days'} (since ${dv.since})`;
+    }
+    const aPct = a.gauge?.percentile !== null && a.gauge?.percentile !== undefined ? ` (${ordinal(a.gauge.percentile)} pct)` : '';
+    const pPct = p.gauge?.percentile !== null && p.gauge?.percentile !== undefined ? ` (${ordinal(p.gauge.percentile)} pct)` : '';
+    return `ALTITUDE: <b>${a.regime}</b>${aPct}${trend(a.gauge?.trend30d)} · PRESSURE: <b>${p.regime}</b>${pPct}${trend(p.gauge?.trend30d)} — ${tail}`;
+  }
+
   function renderBaroBody() {
-    $('divergence-note').hidden = !(wall?.barometer?.divergence?.[zwin]);
+    $('divergence-note').hidden = !(wall?.barometer?.divergence?.[zwin]?.active);
     const p = baro?.barometer?.pressure?.[zwin];
     const a = baro?.barometer?.altitude?.[zwin];
     $('gauge-pressure').innerHTML = gaugeHtml('pressure', 'PRESSURE',
-      'Is stress arriving now? Fast, coincident-to-leading. Falling pressure = deteriorating conditions. Thresholds +1.0 / +0.3 / −0.3 / −1.0, 3-day hysteresis.',
+      'Is stress arriving now? Fast, coincident-to-leading. Falling pressure = deteriorating conditions. 3-day hysteresis.',
       pressureTone(p?.regime));
     $('gauge-altitude').innerHTML = gaugeHtml('altitude', 'ALTITUDE',
-      'How far is there to fall? Slow, structural. Melt-ups end AT maximum altitude — high is a state, not an order. Thresholds −0.5 / +0.5 / +1.25.',
+      'How far is there to fall? Slow, structural stretch — melt-ups end AT maximum altitude. High is a state, not an order.',
       altitudeTone(a?.regime));
+    $('divergence-readout').innerHTML = divergenceReadout();
     renderBacktest();
     renderChangeLog();
+    renderAnalogues();
+    renderAlerts();
     renderDiagnostics();
+  }
+
+  // Five closest historical episodes and what followed each. Dispersion is
+  // the point — the mean of five non-independent outcomes is noise.
+  function renderAnalogues() {
+    const tbl = $('analogue-table');
+    const rows = baro?.analogues ?? [];
+    if (!rows.length) { tbl.innerHTML = '<tr><td>not enough comparable history yet</td></tr>'; return; }
+    const cell = (v) => v === null || v === undefined
+      ? '<td class="pending">—</td>'
+      : `<td class="${v > 0 ? 'neg' : 'pos'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</td>`;
+    const spreads = ['m1', 'm3', 'm6', 'm12'].map((h) => {
+      const vs = rows.map((r) => r.forward[h]).filter((v) => v !== null && v !== undefined);
+      return vs.length >= 2 ? `${Math.min(...vs).toFixed(0)}% to +${Math.max(...vs).toFixed(0)}%`.replace('+-', '−') : '—';
+    });
+    tbl.innerHTML = `
+      <tr><th>DATE</th><th>SIM</th><th>S&P +1M</th><th>+3M</th><th>+6M</th><th>+12M</th></tr>
+      ${rows.map((r) => `
+        <tr>
+          <td>${r.date}</td>
+          <td>${r.similarity.toFixed(3)}<span class="in-meta"> ${r.dims}d</span></td>
+          ${cell(r.forward.m1)}${cell(r.forward.m3)}${cell(r.forward.m6)}${cell(r.forward.m12)}
+        </tr>`).join('')}
+      <tr class="spread-row"><td colspan="2">SPREAD ACROSS EPISODES</td>
+        <td colspan="1">${spreads[0]}</td><td>${spreads[1]}</td><td>${spreads[2]}</td><td>${spreads[3]}</td></tr>`;
+  }
+
+  async function renderAlerts() {
+    const tbl = $('alerts-table');
+    if (!alerts) {
+      try {
+        const res = await fetch('/api/alerts');
+        if (res.ok) alerts = (await res.json()).alerts ?? [];
+      } catch { alerts = []; }
+    }
+    if (!alerts?.length) { tbl.innerHTML = '<tr><td>no alerts fired yet</td></tr>'; return; }
+    tbl.innerHTML = `
+      <tr><th>DATE</th><th>KIND</th><th>WHAT CHANGED</th><th>SENT</th></tr>
+      ${alerts.map((a) => `
+        <tr>
+          <td>${a.date}</td>
+          <td>${a.kind}</td>
+          <td>${escapeHtml(a.message)}</td>
+          <td class="in-meta">${(a.delivered ?? []).join('+') || 'logged'}</td>
+        </tr>`).join('')}`;
   }
 
   function renderBacktest() {
@@ -463,9 +624,15 @@
           <td>${l.scoreDelta === null ? '—' : (l.scoreDelta > 0 ? '+' : '') + l.scoreDelta.toFixed(2)}</td>
         </tr>`).join('')}`;
 
+    // duration chart: the whole nature of divergence is that it persists
+    // longer than expected before resolving — show how long each one held
     const eps = (diag.divergenceEpisodes ?? []).filter((e) => e.window === zwin);
     $('div-table').innerHTML = eps.length
-      ? `<tr><th>START</th><th>END</th></tr>` + eps.map((e) => `<tr><td>${e.start}</td><td>${e.end}</td></tr>`).join('')
+      ? `<tr><th>START</th><th>END</th><th>HELD</th></tr>` + eps.map((e) => {
+          const days = Math.round((Date.parse(e.end) - Date.parse(e.start)) / 86400000) + 1;
+          return `<tr><td>${e.start}</td><td>${e.end}</td>
+            <td><span class="dur-bar" style="width:${Math.min(140, days * 2)}px"></span> ${days}d</td></tr>`;
+        }).join('')
       : '<tr><td>none in the backtest window</td></tr>';
   }
 

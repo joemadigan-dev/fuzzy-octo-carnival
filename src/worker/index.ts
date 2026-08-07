@@ -21,6 +21,14 @@ export default {
     if (req.method === 'POST' && path === '/api/admin/refresh') {
       return adminRefresh(req, env, ctx);
     }
+    // Journal is personal: every route is token-gated, and none of it is
+    // ever edge-cached.
+    if (path === '/api/journal') {
+      if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401);
+      if (req.method === 'POST') return journalCreate(req, env);
+      if (req.method === 'GET') return journalList(env);
+      return new Response('method not allowed', { status: 405 });
+    }
     if (req.method !== 'GET') return new Response('method not allowed', { status: 405 });
 
     const cacheKey = new Request(url.toString(), { method: 'GET' });
@@ -31,6 +39,7 @@ export default {
     let res: Response;
     if (path === '/api/wall') res = await apiWall(env);
     else if (path === '/api/barometer') res = await apiBarometer(env);
+    else if (path === '/api/alerts') res = await apiAlerts(env);
     else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
     else res = json({ error: 'not found' }, 404);
 
@@ -66,7 +75,8 @@ async function apiWall(env: Env): Promise<Response> {
       unitPrefix: def.unitPrefix ?? false,
       decimals: def.decimals,
       showPct: def.showPct ?? true,
-      direction: def.direction,
+      stressSign: def.stressSign ?? 1,
+      signRationale: def.signRationale ?? null,
       freq: def.freq ?? 'daily',
       deadline: def.deadline ?? null,
       latest: s ? (s.latest_value as number | null) : null,
@@ -123,6 +133,7 @@ async function apiBarometer(env: Env): Promise<Response> {
     computedAt: state.computed_at,
     barometer: detail.barometer,
     divergence: detail.divergence,
+    analogues: detail.analogues ?? [],
     diagnostics: detail.diagnostics,
     history: chart ? JSON.parse(chart.points) : null,
     changes: (changes.results ?? []).map((c) => ({ ...c, drivers: JSON.parse(c.drivers as string) })),
@@ -142,15 +153,138 @@ async function apiSeries(env: Env, rawId: string): Promise<Response> {
   );
 }
 
+async function apiAlerts(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    'SELECT date, kind, key, message, delivered, created_at FROM alerts ORDER BY created_at DESC LIMIT 100',
+  ).all();
+  return json({
+    alerts: (rows.results ?? []).map((a) => ({ ...a, delivered: safeParse(a.delivered as string | null) })),
+  }, 200, 60);
+}
+
+// ── decision journal (token-gated, never cached) ───────────────────────
+
+function authorized(req: Request, env: Env): boolean {
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+    ?? new URL(req.url).searchParams.get('token');
+  return Boolean(env.ADMIN_TOKEN) && token === env.ADMIN_TOKEN;
+}
+
+async function journalCreate(req: Request, env: Env): Promise<Response> {
+  let body: Record<string, unknown>;
+  try { body = await req.json() as Record<string, unknown>; }
+  catch { return noStore({ error: 'invalid JSON' }, 400); }
+
+  const entry = String(body.entry ?? '').trim();
+  if (!entry) return noStore({ error: 'entry text required' }, 400);
+  if (entry.length > 20000) return noStore({ error: 'entry too long' }, 400);
+
+  const stance = ['bullish', 'bearish', 'neutral'].includes(String(body.stance)) ? String(body.stance) : null;
+  const convictionRaw = Number(body.conviction);
+  const conviction = Number.isFinite(convictionRaw) ? Math.max(1, Math.min(5, Math.round(convictionRaw))) : null;
+  const action = body.action ? String(body.action).slice(0, 4000) : null;
+  const instruments = Array.isArray(body.instruments)
+    ? body.instruments.filter((x): x is string => typeof x === 'string' && kpiById.has(x)).slice(0, 10)
+    : [];
+
+  // Snapshot the full wall state at write time — reading finished rows,
+  // not computing. Memory can't rewrite what was recorded here.
+  const [stateRes, signalRow] = await Promise.all([
+    env.DB.prepare('SELECT series_id, latest_value, latest_date, status FROM wall_state').all<Record<string, unknown>>(),
+    env.DB.prepare('SELECT computed_at, detail FROM signal_state WHERE id = 1').first<{ computed_at: string; detail: string }>(),
+  ]);
+  const detail = signalRow ? JSON.parse(signalRow.detail) : null;
+  const gauge = (layer: string, w: string) => {
+    const d = detail?.barometer?.[layer]?.[w];
+    return d ? { score: d.score, regime: d.regime, percentile: d.gauge?.percentile ?? null } : null;
+  };
+  const snapshot = {
+    takenAt: new Date().toISOString(),
+    computedAt: signalRow?.computed_at ?? null,
+    pressure: { '2y': gauge('pressure', '2y'), '5y': gauge('pressure', '5y') },
+    altitude: { '2y': gauge('altitude', '2y'), '5y': gauge('altitude', '5y') },
+    divergence: detail?.divergence ?? null,
+    inputs: (stateRes.results ?? []).map((r) => ({
+      id: r.series_id, value: r.latest_value, asOf: r.latest_date, status: r.status,
+    })),
+    subZ: extractSubZ(detail),
+  };
+
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    `INSERT INTO journal_entries (created_at, entry, stance, action, conviction, instruments, snapshot, realized)
+     VALUES (?,?,?,?,?,?,?,NULL)`,
+  ).bind(now, entry, stance, action, conviction, JSON.stringify(instruments), JSON.stringify(snapshot)).run();
+
+  return noStore({ ok: true, id: res.meta?.last_row_id ?? null, createdAt: now });
+}
+
+function extractSubZ(detail: any): Record<string, Record<string, number | null>> {
+  const out: Record<string, Record<string, number | null>> = {};
+  for (const layer of ['pressure', 'altitude']) {
+    const subs = detail?.barometer?.[layer]?.['2y']?.subs ?? [];
+    for (const s of subs) {
+      out[s.id] = { z: s.z ?? null };
+      for (const i of s.inputs ?? []) out[s.id][i.id] = i.z ?? null;
+    }
+  }
+  return out;
+}
+
+async function journalList(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    'SELECT id, created_at, entry, stance, action, conviction, instruments, snapshot, realized FROM journal_entries ORDER BY created_at DESC LIMIT 200',
+  ).all<Record<string, unknown>>();
+  const entries = (rows.results ?? []).map((r) => ({
+    id: r.id,
+    createdAt: r.created_at,
+    entry: r.entry,
+    stance: r.stance,
+    action: r.action,
+    conviction: r.conviction,
+    instruments: safeParse(r.instruments as string | null) ?? [],
+    snapshot: safeParse(r.snapshot as string | null),
+    realized: safeParse(r.realized as string | null),
+  }));
+
+  // Calibration: stated conviction vs realised 3-month accuracy. The single
+  // question no amount of extra KPIs can answer.
+  const buckets: Record<number, { n: number; hits: number }> = {};
+  for (const e of entries) {
+    const hit = (e.realized as { hit3m?: boolean | null } | null)?.hit3m;
+    const c = e.conviction as number | null;
+    if (hit === null || hit === undefined || !c) continue;
+    buckets[c] ??= { n: 0, hits: 0 };
+    buckets[c].n++;
+    if (hit) buckets[c].hits++;
+  }
+  const calibration = Object.entries(buckets).map(([conviction, b]) => ({
+    conviction: Number(conviction), n: b.n, hitRate: Math.round((b.hits / b.n) * 1000) / 10,
+  })).sort((a, b) => a.conviction - b.conviction);
+
+  return noStore({ entries, calibration });
+}
+
 async function adminRefresh(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? new URL(req.url).searchParams.get('token');
-  if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return json({ error: 'unauthorized' }, 401);
+  if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401);
   try {
     const log = await runScheduled(env);
     return json({ ok: true, log: log.split('\n') });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }
+}
+
+function safeParse(s: string | null): unknown {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+function noStore(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  });
 }
 
 // ── plumbing ───────────────────────────────────────────────────────────

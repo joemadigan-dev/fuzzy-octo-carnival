@@ -9,7 +9,7 @@
 import type { Point } from '../sources/types.ts';
 import { KPIS, kpiById, type KpiDef, type Freq } from '../registry/kpis.ts';
 import {
-  LAYERS, Z_WINDOWS, HYSTERESIS_DAYS, MIN_COVERAGE, CORR_FLAG, DIVERGENCE,
+  LAYERS, Z_WINDOWS, HYSTERESIS_DAYS, MIN_COVERAGE, CORR_FLAG, DIVERGENCE, GAUGE_REF_DATES,
   PRESSURE_REGIMES, PRESSURE_THRESHOLDS, ALTITUDE_REGIMES, ALTITUDE_THRESHOLDS,
   type LayerId, type ZWindow, type PressureRegime, type AltitudeRegime,
 } from '../registry/signal.ts';
@@ -36,11 +36,23 @@ export interface SubDetail {
   inputs: BaroInputDetail[];
 }
 
+/** Everything the gauge face needs: distribution, percentile, reference
+ *  marks, recent range — "is this high?" answered without memory. */
+export interface GaugeData {
+  percentile: number | null;      // current score vs full history
+  firstDate: string | null;       // "since 2002-…"
+  hist: { bins: number[]; min: number; max: number };
+  refMarks: { label: string; date: string; score: number }[];
+  tfRange: Record<'d' | 'w' | 'm' | 'y', { lo: number; hi: number } | null>;
+  trend30d: number | null;        // score change vs ~30 days ago
+}
+
 export interface LayerWindowDetail {
   score: number | null;
   regime: Regime | null;
   rawRegime: Regime | null;
   subs: SubDetail[];
+  gauge: GaugeData;
 }
 
 export interface HistoryRow {
@@ -71,8 +83,26 @@ export interface Diagnostics {
   divergenceEpisodes: { window: ZWindow; start: string; end: string }[];
 }
 
+/** A historical date whose z-score vector most resembles today's. Pattern
+ *  similarity across a handful of non-independent episodes — NOT a
+ *  probability, and the UI copy says so. */
+export interface Analogue {
+  date: string;
+  similarity: number;                 // cosine, shared dimensions
+  dims: number;                       // how many inputs were comparable
+  forward: { m1: number | null; m3: number | null; m6: number | null; m12: number | null }; // SPX %
+}
+
+export interface DivergenceNow {
+  active: boolean;
+  since: string | null;  // first day of the current episode
+  days: number;          // calendar days it has held
+}
+
 export interface BarometerResult {
   detail: Record<LayerId, Record<ZWindow, LayerWindowDetail>>;
+  divergenceNow: Record<ZWindow, DivergenceNow>;
+  analogues: Analogue[];
   history: HistoryRow[];
   changes: ChangeRow[];
   diagnostics: Diagnostics;
@@ -252,6 +282,7 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
         regime: li < 0 ? null : b.regimes[li],
         rawRegime: li < 0 ? null : b.raws[li],
         subs,
+        gauge: buildGauge(layer.id, dates, b.scores, li),
       };
     }
   }
@@ -298,6 +329,21 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   }
   loo.sort((x, y) => y.pctDaysChanged - x.pctDaysChanged);
 
+  // current divergence state per window
+  const divergenceNow = {} as Record<ZWindow, DivergenceNow>;
+  for (const w of ['2y', '5y'] as ZWindow[]) {
+    let since: string | null = null;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if ((w === '2y' ? history[i].div_2y : history[i].div_5y) !== 1) break;
+      since = history[i].date;
+    }
+    const active = since !== null;
+    const days = active
+      ? Math.round((Date.parse(history[history.length - 1].date) - Date.parse(since!)) / 86400000) + 1
+      : 0;
+    divergenceNow[w] = { active, since, days };
+  }
+
   // divergence episodes
   const divergenceEpisodes: Diagnostics['divergenceEpisodes'] = [];
   for (const w of ['2y', '5y'] as ZWindow[]) {
@@ -310,7 +356,174 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     if (start) divergenceEpisodes.push({ window: w, start, end: history[history.length - 1].date });
   }
 
-  return { detail, history, changes, diagnostics: { corr: { ids, matrix, flagged }, loo, divergenceEpisodes } };
+  const analogues = findAnalogues(dates, zsets, seriesMap.get('spx') ?? []);
+
+  return { detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged }, loo, divergenceEpisodes } };
+}
+
+/** Distribution, percentile, reference marks and recent range for a layer's
+ *  score history. `li` = index of the current (last non-null) score. */
+function buildGauge(layerId: LayerId, dates: string[], scores: (number | null)[], li: number): GaugeData {
+  const empty: GaugeData = {
+    percentile: null, firstDate: null,
+    hist: { bins: [], min: -2.5, max: 2.5 },
+    refMarks: [], tfRange: { d: null, w: null, m: null, y: null }, trend30d: null,
+  };
+  if (li < 0) return empty;
+  const cur = scores[li]!;
+
+  const vals: number[] = [];
+  let firstDate: string | null = null;
+  for (let i = 0; i <= li; i++) {
+    if (scores[i] !== null) {
+      vals.push(scores[i]!);
+      if (!firstDate) firstDate = dates[i];
+    }
+  }
+
+  let below = 0;
+  for (const v of vals) if (v <= cur) below++;
+  const percentile = (below / vals.length) * 100;
+
+  const min = Math.min(-2.5, ...vals);
+  const max = Math.max(2.5, ...vals);
+  const NBINS = 40;
+  const bins = new Array(NBINS).fill(0);
+  for (const v of vals) {
+    bins[Math.min(NBINS - 1, Math.max(0, Math.floor(((v - min) / (max - min)) * NBINS)))]++;
+  }
+  const peak = Math.max(...bins, 1);
+
+  const refMarks: GaugeData['refMarks'] = [];
+  for (const ref of GAUGE_REF_DATES) {
+    const idx = idxOnOrBefore(dates, ref.date);
+    if (idx >= 0 && scores[idx] !== null && dates[idx] >= isoDaysAgo(ref.date, 21)) {
+      refMarks.push({ label: ref.label, date: dates[idx], score: r4(scores[idx])! });
+    }
+  }
+  // most recent local peak: the past year's extremum in the storm direction
+  // (pressure: lowest; altitude: highest)
+  const yearAgo = isoDaysAgo(dates[li], 365);
+  let peakIdx = -1;
+  for (let i = 0; i <= li; i++) {
+    if (dates[i] < yearAgo || scores[i] === null) continue;
+    if (peakIdx < 0
+      || (layerId === 'pressure' ? scores[i]! < scores[peakIdx]! : scores[i]! > scores[peakIdx]!)) {
+      peakIdx = i;
+    }
+  }
+  if (peakIdx >= 0 && peakIdx !== li) {
+    refMarks.push({ label: '1Y PEAK', date: dates[peakIdx], score: r4(scores[peakIdx])! });
+  }
+
+  const tfRange = { d: null, w: null, m: null, y: null } as GaugeData['tfRange'];
+  const HORIZON: Record<'d' | 'w' | 'm' | 'y', number> = { d: 1, w: 7, m: 30, y: 365 };
+  for (const tf of ['d', 'w', 'm', 'y'] as const) {
+    const from = isoDaysAgo(dates[li], HORIZON[tf]);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = li; i >= 0 && dates[i] >= from; i--) {
+      if (scores[i] === null) continue;
+      if (scores[i]! < lo) lo = scores[i]!;
+      if (scores[i]! > hi) hi = scores[i]!;
+    }
+    if (lo <= hi) tfRange[tf] = { lo: r4(lo)!, hi: r4(hi)! };
+  }
+
+  const t30 = idxOnOrBefore(dates, isoDaysAgo(dates[li], 30));
+  const trend30d = t30 >= 0 && scores[t30] !== null ? r4(cur - scores[t30]!) : null;
+
+  return {
+    percentile: r4(percentile),
+    firstDate,
+    hist: { bins: bins.map((b: number) => r4(b / peak)!), min: r4(min)!, max: r4(max)! },
+    refMarks,
+    tfRange,
+    trend30d,
+  };
+}
+
+/** Nearest-neighbour search on the current 5y-window z-vector across all
+ *  history: cosine similarity over shared dimensions, ≥70% of today's
+ *  dimensions required, candidates ≥180d old and ≥60d apart. */
+function findAnalogues(dates: string[], zsets: ZSet[], spx: Point[]): Analogue[] {
+  if (!dates.length) return [];
+  const today = dates[dates.length - 1];
+  const current = new Map<string, number>();
+  for (const z of zsets) {
+    const v = z.byWindow['5y'].get(today);
+    if (v !== undefined) current.set(z.def.id, v);
+  }
+  if (current.size < 6) return [];
+  const minDims = Math.ceil(current.size * 0.7);
+  const cutoff = isoDaysAgo(today, 180);
+
+  const scored: { date: string; sim: number; dims: number }[] = [];
+  for (const date of dates) {
+    if (date >= cutoff) continue;
+    let dot = 0, na = 0, nb = 0, dims = 0;
+    for (const [id, a] of current) {
+      const b = zById(zsets, id).get(date);
+      if (b === undefined) continue;
+      dims++; dot += a * b; na += a * a; nb += b * b;
+    }
+    if (dims < minDims || na < 1e-12 || nb < 1e-12) continue;
+    scored.push({ date, sim: dot / Math.sqrt(na * nb), dims });
+  }
+  scored.sort((a, b) => b.sim - a.sim);
+
+  const picked: typeof scored = [];
+  for (const s of scored) {
+    if (picked.length >= 5) break;
+    if (picked.every((p) => Math.abs(Date.parse(p.date) - Date.parse(s.date)) > 60 * 86400000)) {
+      picked.push(s);
+    }
+  }
+
+  return picked.map((p) => ({
+    date: p.date,
+    similarity: r4(p.sim)!,
+    dims: p.dims,
+    forward: {
+      m1: fwdReturn(spx, p.date, 30),
+      m3: fwdReturn(spx, p.date, 91),
+      m6: fwdReturn(spx, p.date, 182),
+      m12: fwdReturn(spx, p.date, 365),
+    },
+  }));
+}
+
+function zById(zsets: ZSet[], id: string): Map<string, number> {
+  for (const z of zsets) if (z.def.id === id) return z.byWindow['5y'];
+  return new Map();
+}
+
+function fwdReturn(spx: Point[], from: string, days: number): number | null {
+  if (!spx.length) return null;
+  const start = valAt(spx, from);
+  const end = valAt(spx, isoDaysAgo(from, -days));
+  // only report a horizon that has fully elapsed
+  if (!start || !end || end.date <= start.date || spx[spx.length - 1].date < isoDaysAgo(from, -days)) return null;
+  return Math.abs(start.value) > 1e-12 ? r4(((end.value - start.value) / start.value) * 100) : null;
+}
+
+function valAt(pts: Point[], date: string): Point | null {
+  let lo = 0, hi = pts.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].date <= date) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return ans >= 0 ? pts[ans] : null;
+}
+
+function idxOnOrBefore(dates: string[], date: string): number {
+  let lo = 0, hi = dates.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (dates[mid] <= date) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return ans;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────
@@ -325,10 +538,11 @@ function classify(layer: LayerId, s: number): Regime {
     return 'CHANGE';
   }
   const t = ALTITUDE_THRESHOLDS;
-  if (s >= t.extremeAt) return 'EXTREME';
+  if (s >= t.stratosphericAt) return 'STRATOSPHERIC';
+  if (s >= t.extendedAt) return 'EXTENDED';
   if (s >= t.highAt) return 'HIGH';
-  if (s < t.lowBelow) return 'LOW';
-  return 'MODERATE';
+  if (s < t.groundedBelow) return 'GROUNDED';
+  return 'CLIMBING';
 }
 
 function applyHysteresis(rawR: (Regime | null)[]): (Regime | null)[] {

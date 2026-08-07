@@ -11,12 +11,17 @@ import { SOURCES, type Point } from '../sources/index.ts';
 import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
 import { computeBarometer } from '../compute/barometer.ts';
+import { runAlerts, reviewJournal } from './accountability.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
 export interface Env {
   DB: D1Database;
   FRED_API_KEY?: string;
   ADMIN_TOKEN?: string;
+  ALERT_WEBHOOK_URL?: string;
+  RESEND_API_KEY?: string;
+  ALERT_EMAIL_TO?: string;
+  ALERT_EMAIL_FROM?: string;
 }
 
 /** Re-fetch window: always re-cover this many days before the newest stored
@@ -115,8 +120,13 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
 
   // ── 4. wall_state + expanded-chart data per visible KPI ──────────────
   const prevSuccess = new Map<string, string | null>();
-  const prevRows = await env.DB.prepare('SELECT series_id, last_success_at FROM wall_state').all<{ series_id: string; last_success_at: string | null }>();
-  for (const r of prevRows.results ?? []) prevSuccess.set(r.series_id, r.last_success_at);
+  const prevFlags = new Map<string, string | null>();
+  const currFlags = new Map<string, string | null>();
+  const prevRows = await env.DB.prepare('SELECT series_id, last_success_at, flag FROM wall_state').all<{ series_id: string; last_success_at: string | null; flag: string | null }>();
+  for (const r of prevRows.results ?? []) {
+    prevSuccess.set(r.series_id, r.last_success_at);
+    prevFlags.set(r.series_id, r.flag);
+  }
 
   const stateStmts: D1PreparedStatement[] = [];
   const upsertState = env.DB.prepare(
@@ -142,6 +152,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       fetchError: oc.error,
       prevLastSuccessAt: prevSuccess.get(kpi.id) ?? null,
     });
+    currFlags.set(kpi.id, row.flag);
     stateStmts.push(upsertState.bind(
       row.series_id, row.computed_at, row.latest_value, row.latest_date,
       JSON.stringify(row.changes), JSON.stringify(row.sparks), JSON.stringify(row.direction_state),
@@ -162,13 +173,13 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
     const result = computeBarometer(seriesMap);
     const stmts: D1PreparedStatement[] = [];
 
-    const lastRow = result.history.length ? result.history[result.history.length - 1] : null;
     stmts.push(env.DB.prepare(
       `INSERT INTO signal_state (id, computed_at, detail) VALUES (1,?,?)
        ON CONFLICT(id) DO UPDATE SET computed_at=excluded.computed_at, detail=excluded.detail`,
     ).bind(nowIso, JSON.stringify({
       barometer: result.detail,
-      divergence: lastRow ? { '2y': lastRow.div_2y === 1, '5y': lastRow.div_5y === 1 } : { '2y': false, '5y': false },
+      divergence: result.divergenceNow,
+      analogues: result.analogues,
       diagnostics: result.diagnostics,
     })));
 
@@ -214,7 +225,19 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
     await batched(env.DB, stmts);
     const p = result.detail.pressure['2y'];
     const a = result.detail.altitude['2y'];
-    log.push(`barometer: pressure=${p.score} ${p.regime} · altitude=${a.score} ${a.regime} · changes=${result.changes.length} · corrFlags=${result.diagnostics.corr.flagged.length}`);
+    log.push(`barometer: pressure=${p.score} ${p.regime} · altitude=${a.score} ${a.regime} · changes=${result.changes.length} · corrFlags=${result.diagnostics.corr.flagged.length} · analogues=${result.analogues.length}`);
+
+    // ── 6. accountability: alerts + journal review ───────────────────
+    try {
+      log.push(...await runAlerts(env, result, seriesMap, prevFlags, currFlags, nowIso));
+    } catch (e) {
+      log.push(`alerts: FAILED — ${e}`);
+    }
+    try {
+      log.push(...await reviewJournal(env, seriesMap));
+    } catch (e) {
+      log.push(`journal review: FAILED — ${e}`);
+    }
   } catch (e) {
     log.push(`barometer: FAILED — ${e}`);
   }

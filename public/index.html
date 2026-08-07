@@ -39,6 +39,8 @@
   </div>
 </header>
 
+<div class="frame-note">colour reads systemic conditions — green: toward benign · red: toward storm — not your positioning</div>
+
 <main class="wall" id="wall" aria-live="off">
   <!-- clusters + tiles rendered by app.js -->
 </main>
@@ -66,6 +68,7 @@
       <div class="baro-gauge" id="gauge-pressure"></div>
       <div class="baro-gauge" id="gauge-altitude"></div>
     </div>
+    <div class="divergence-readout" id="divergence-readout"></div>
 
     <div class="sig-backtest">
       <h3>BACKTEST — BOTH LAYERS, INCLUDING WHERE EACH WAS WRONG · SHADED = DIVERGENCE</h3>
@@ -73,9 +76,24 @@
       <p class="sig-note">A barometer says pressure is dropping. It does not say when the rain starts, and it does not tell you to sell anything.</p>
     </div>
 
-    <div class="sig-log">
-      <h3>REGIME CHANGE LOG</h3>
-      <div class="sig-log-scroll"><table id="sig-log-table"></table></div>
+    <div class="sig-two">
+      <div class="sig-analogues">
+        <h3>WHEN DID THE WORLD LAST LOOK LIKE THIS?</h3>
+        <p class="sig-note">Nearest neighbours on today's z-score vector (cosine similarity, 5Y window),
+          each ≥6 months old and ≥60 days apart. What followed is shown per episode, never averaged —
+          the spread is the finding. This is pattern similarity across a handful of non-independent
+          historical episodes. It is not a probability and not a forecast.</p>
+        <table id="analogue-table"></table>
+      </div>
+      <div class="sig-log">
+        <h3>REGIME CHANGE LOG</h3>
+        <div class="sig-log-scroll"><table id="sig-log-table"></table></div>
+      </div>
+    </div>
+
+    <div class="sig-alerts">
+      <h3>ALERT LOG — WHAT FIRED, WHEN, AND WHERE IT WENT</h3>
+      <div class="sig-log-scroll"><table id="alerts-table"></table></div>
     </div>
 
     <div class="sig-diag">
@@ -98,7 +116,7 @@
   </div>
 </section>
 
-<footer class="foot" id="foot">sources: FRED · stooq · yahoo · cnn · naaim — refreshed hourly — polls every 60s</footer>
+<footer class="foot" id="foot">sources: FRED · stooq · yahoo · cnn · naaim — refreshed hourly — polls every 60s — <a href="/journal.html">decision journal</a></footer>
 
 <script src="/vendor/uPlot.iife.min.js"></script>
 <script src="/app.js"></script>

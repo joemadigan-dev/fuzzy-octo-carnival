@@ -50,6 +50,19 @@ function sparkFrom(points: Point[], fromDate: string): Spark | null {
   };
 }
 
+/** σ of first differences over the trailing ~250 observations. */
+function dailyMoveSigma(points: Point[]): number {
+  const start = Math.max(1, points.length - 250);
+  let n = 0, s = 0, ss = 0;
+  for (let i = start; i < points.length; i++) {
+    const d = points[i].value - points[i - 1].value;
+    n++; s += d; ss += d * d;
+  }
+  if (n < 20) return 0;
+  const mean = s / n;
+  return Math.sqrt(Math.max(0, ss / n - mean * mean));
+}
+
 function dirOf(change: Change | null, epsilon: number): DirState {
   if (!change) return 'flat';
   if (change.abs > epsilon) return 'up';
@@ -73,8 +86,10 @@ export function buildWallState(def: KpiDef, points: Point[], opts: BuildOpts): W
   const direction_state: WallStateRow['direction_state'] = {};
 
   if (latest && points.length >= 2) {
-    // epsilon for flat detection scales with the KPI's display precision
-    const epsilon = Math.pow(10, -def.decimals) / 2;
+    // Deadband: a move under 0.1 σ of this series' own daily move is not
+    // information — it renders neutral grey instead of a weak green/red.
+    // Display precision provides the floor for very quiet series.
+    const epsilon = Math.max(Math.pow(10, -def.decimals) / 2, 0.1 * dailyMoveSigma(points));
 
     for (const tf of TIMEFRAMES) {
       let base: Point | null;

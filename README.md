@@ -65,6 +65,11 @@ npm run migrate:remote        # or migrate:local for dev
 ```sh
 npx wrangler secret put FRED_API_KEY   # the FRED key
 npx wrangler secret put ADMIN_TOKEN    # any random string; guards /api/admin/refresh
+                                       # AND unlocks the decision journal
+# optional alert delivery:
+npx wrangler secret put ALERT_WEBHOOK_URL   # Slack/Discord/any JSON POST endpoint
+npx wrangler secret put RESEND_API_KEY      # or email, via Resend's free tier
+npx wrangler secret put ALERT_EMAIL_TO
 ```
 
 For local dev: `cp .dev.vars.example .dev.vars` and fill it in
@@ -179,12 +184,70 @@ touching gold or oil; the Four Bodies now carry 15% of one layer.
 - The full backtest of BOTH layers renders on-page, including where each
   was wrong.
 
+**Gauge faces** answer "is this high?" without requiring memory: the
+current percentile against full history, the historical distribution drawn
+behind the needle, fixed reference marks (Sep 2008 / Mar 2020 / Sep 2022 /
+the last 1-year peak), named zone arcs, and the high/low range over the
+selected timeframe. Pressure zones are solid, Altitude zones hatched — the
+two faces must never be mistaken for each other. A single readout line
+beneath both names the current configuration and how long any divergence
+has held.
+
 **Diagnostics (on-page, load-bearing):** the pairwise correlation matrix
 of every z-scored input (pairs |ρ| ≥ 0.7 flagged in red) and a
 leave-one-out table — the full regime history recomputed without each
 input, showing the % of days the history changes. Near-zero means the
 input is decorative and the weights are lying about what drives the
 signal.
+
+## Colour semantics
+
+**Tile colour is the tile's contribution to THE BAROMETER.** Every KPI
+declares `stressSign: +1 | -1` — whether a rising value pushes the system
+toward storm — and the tile colours from it. Green means the move is
+pushing toward benign, red toward storm. A tile can never be green while
+making the composite worse.
+
+**The frame is systemic conditions, not portfolio P&L.** Green means the
+financial system is in better shape; it deliberately does not account for
+how anyone is positioned. Someone positioned for a bust would find a red
+wall encouraging, and the wall does not do that inversion for them — the
+moment it colours by desired outcome it stops reporting on the world. A
+header line states this on the page.
+
+Every sign carries a one-line `signRationale` in the registry, surfaced on
+tile hover, written when the decision was made. Correlation tiles are
+signed on *deviation from normal*, not level. Moves smaller than 0.1σ of
+the series' own daily move render neutral grey rather than a weak tint.
+
+## Accountability
+
+- **Alerts** (`/api/alerts`, logged on-page): regime changes on either
+  gauge, divergence opening/closing, any signal input crossing its 95th or
+  5th percentile, the Response Gap breaching 2.0z, and thesis levels being
+  hit (IGV's H&S state, any target crossing). Rate limiting is structural
+  — the alerts table's primary key is `(date, kind, key)`, so at most one
+  alert per state per day can exist. Each alert says what changed, what
+  drove it, and what it was before. Delivery is webhook and/or email if
+  configured (`wrangler secret put ALERT_WEBHOOK_URL` / `RESEND_API_KEY` +
+  `ALERT_EMAIL_TO`); with neither set, alerts still land in the table and
+  render on the page — never silently dropped.
+- **Historical analogues**: nearest-neighbour search on today's z-score
+  vector across all history (cosine similarity, ≥70% dimension overlap,
+  candidates ≥6 months old and ≥60 days apart). The five closest dates are
+  shown with what the S&P did over the following 1/3/6/12 months —
+  **every outcome individually plus the spread, never the average**. Five
+  non-independent episodes have no meaningful mean, and the honest finding
+  is usually that similar conditions preceded wildly different outcomes.
+- **The decision journal** (`/journal.html`, token-gated, `noindex`):
+  dated entries with free text, stance, action, and conviction 1–5. Every
+  entry snapshots the full wall state at write time — both gauges, every
+  input reading, the active regimes. The cron fills in what actually
+  happened at +1/+3/+6 months for the S&P and any instrument named in the
+  entry, then scores **calibration**: stated conviction against realised
+  3-month accuracy. That table is the highest-value output here — it says
+  whether your reading of this instrument is any good, which no amount of
+  additional KPIs can answer.
 
 ## Source caveats (verified, honest maximums)
 

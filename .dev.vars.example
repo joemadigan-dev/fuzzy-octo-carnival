@@ -2,5 +2,14 @@
 # FRED API key — free, instant: https://fred.stlouisfed.org/docs/api/api_key.html
 # Optional: without it the FRED source uses the keyless fredgraph.csv endpoint.
 FRED_API_KEY=
-# Any random string; guards POST /api/admin/refresh (manual fetch/backfill trigger).
+# Any random string; guards POST /api/admin/refresh and the decision journal.
 ADMIN_TOKEN=change-me
+
+# Optional alert delivery. With neither configured, alerts are still recorded
+# in D1 and rendered on the page — they are never silently dropped.
+# Webhook (Slack/Discord/anything accepting a JSON POST):
+ALERT_WEBHOOK_URL=
+# Email via Resend (free tier):
+RESEND_API_KEY=
+ALERT_EMAIL_TO=
+ALERT_EMAIL_FROM=

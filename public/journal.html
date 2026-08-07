@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE WALL — DECISION JOURNAL</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23101214'/%3E%3Crect x='2' y='9' width='3' height='5' fill='%230b6433'/%3E%3Crect x='6.5' y='5' width='3' height='9' fill='%23e8e9e4'/%3E%3Crect x='11' y='7' width='3' height='7' fill='%23dc4956'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Spline+Sans+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bezel">
+  <div class="wordmark">THE&nbsp;WALL</div>
+  <span class="jr-sub">DECISION JOURNAL</span>
+  <div class="bezel-spacer"></div>
+  <div class="bezel-meta"><div class="clock" id="clock">—</div><div id="jr-status">locked</div></div>
+</header>
+
+<div class="frame-note">private — token-gated, never indexed. Every entry snapshots the full wall state at write time, and the record is filled in later with what actually happened.</div>
+
+<main class="jr-main">
+
+  <section class="jr-gate" id="jr-gate">
+    <h2>TOKEN</h2>
+    <p class="sig-note">Paste the admin token. It is held in this browser tab only (sessionStorage) and sent as a bearer token.</p>
+    <form id="jr-gate-form" class="jr-gate-form">
+      <input type="password" id="jr-token" autocomplete="current-password" placeholder="ADMIN_TOKEN" required>
+      <button type="submit">UNLOCK</button>
+    </form>
+    <div class="jr-error" id="jr-gate-error"></div>
+  </section>
+
+  <section class="jr-app" id="jr-app" hidden>
+    <div class="jr-cols">
+      <form class="jr-form" id="jr-form">
+        <h2>NEW ENTRY</h2>
+        <div class="jr-snapshot" id="jr-snapshot">reading current wall state…</div>
+
+        <label for="jr-entry">WHAT YOU ARE SEEING</label>
+        <textarea id="jr-entry" rows="7" required placeholder="What the wall is showing, what you think happens next, and why."></textarea>
+
+        <label for="jr-action">ACTION TAKEN OR CONSIDERED</label>
+        <textarea id="jr-action" rows="3" placeholder="Optional. What you did, or decided not to do."></textarea>
+
+        <div class="jr-row">
+          <div>
+            <label for="jr-stance">STANCE (NEXT 3 MONTHS)</label>
+            <select id="jr-stance">
+              <option value="">— none —</option>
+              <option value="bullish">bullish</option>
+              <option value="bearish">bearish</option>
+              <option value="neutral">neutral</option>
+            </select>
+          </div>
+          <div>
+            <label for="jr-conviction">CONVICTION</label>
+            <select id="jr-conviction">
+              <option value="">— none —</option>
+              <option value="1">1 — idle observation</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5 — would size up on it</option>
+            </select>
+          </div>
+        </div>
+
+        <label for="jr-instruments">INSTRUMENTS (tracked forward alongside the S&amp;P)</label>
+        <select id="jr-instruments" multiple size="6"></select>
+
+        <button type="submit" id="jr-submit">RECORD ENTRY</button>
+        <div class="jr-error" id="jr-form-error"></div>
+      </form>
+
+      <div class="jr-review">
+        <h2>CALIBRATION</h2>
+        <p class="sig-note">Stated conviction against realised 3-month accuracy. This is the number that says whether your reading of this instrument is any good — the one question no additional KPI can answer. It needs entries and elapsed time before it means anything.</p>
+        <table id="jr-calibration"></table>
+
+        <h2>ENTRIES</h2>
+        <div id="jr-entries"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot"><a href="/">← back to the wall</a></footer>
+
+<script src="/journal.js"></script>
+</body>
+</html>
