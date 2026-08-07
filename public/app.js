@@ -335,7 +335,7 @@
 
   function gaugeSvg(layerId, g, score) {
     if (!g || score === null || score === undefined) return '';
-    const W = 640, H = 126, L = 14, R = 626;
+    const W = 640, H = 132, L = 14, R = 626;
     const lo = Math.min(g.hist.min, -2.5), hi = Math.max(g.hist.max, 2.5);
     const x = (s) => L + ((Math.max(lo, Math.min(hi, s)) - lo) / (hi - lo)) * (R - L);
     const zones = ZONES[layerId];
@@ -388,12 +388,14 @@
     // Crisis dates cluster tightly on the altitude face, so labels stagger
     // onto a second row rather than overprinting each other.
     const marks = [...(g.refMarks ?? [])].sort((p, q) => p.score - q.score);
-    let lastX = -Infinity, row = 0;
+    const rowEnds = [-Infinity, -Infinity, -Infinity]; // rightmost label edge per row
     for (const m of marks) {
       const mx = x(m.score);
-      row = mx - lastX < 42 ? (row + 1) % 2 : 0;
-      lastX = mx;
-      const ty = 101 + row * 15;
+      const half = (`${m.label} ${m.score.toFixed(1)}`.length * 4.6) / 2;
+      let row = rowEnds.findIndex((end) => mx - half > end);
+      if (row < 0) row = 0;
+      rowEnds[row] = mx + half + 4;
+      const ty = 100 + row * 13;
       parts.push(`<line x1="${mx.toFixed(1)}" y1="52" x2="${mx.toFixed(1)}" y2="${(ty - 8).toFixed(1)}" stroke="#17191c" stroke-width="0.9" stroke-dasharray="2 2"/>
         <text x="${mx.toFixed(1)}" y="${ty}" text-anchor="middle" font-size="7.5" fill="#5f635d"
           font-family="'Spline Sans Mono',monospace">${m.label} <tspan fill="#8b8e88">${m.score.toFixed(1)}</tspan></text>`);
