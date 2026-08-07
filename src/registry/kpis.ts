@@ -64,7 +64,7 @@ export const KPIS: KpiDef[] = [
   },
   {
     id: 'gold',
-    label: 'GOLD SPOT',
+    label: 'GOLD',
     cluster: 'four_bodies',
     unit: '$', unitPrefix: true,
     decimals: 0,

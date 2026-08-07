@@ -14,8 +14,7 @@ run_worker_first = ["/api/*", "/__scheduled"]
 [[d1_databases]]
 binding = "DB"
 database_name = "the-wall"
-# Replace with the id printed by:  wrangler d1 create the-wall
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "4d91e27e-cc57-41bf-ada9-3e504f1d27d7"
 
 # ONE cron trigger for everything (free tier allows 5 per account — use 1).
 # Hourly: daily FRED series update once a day, gold (stooq) is intraday-ish.
