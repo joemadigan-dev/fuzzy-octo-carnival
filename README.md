@@ -191,14 +191,55 @@ touching gold or oil; the Four Bodies now carry 15% of one layer.
 - The full backtest of BOTH layers renders on-page, including where each
   was wrong.
 
-**Gauge faces** answer "is this high?" without requiring memory: the
-current percentile against full history, the historical distribution drawn
-behind the needle, fixed reference marks (Sep 2008 / Mar 2020 / Sep 2022 /
-the last 1-year peak), named zone arcs, and the high/low range over the
-selected timeframe. Pressure zones are solid, Altitude zones hatched — the
-two faces must never be mistaken for each other. A single readout line
-beneath both names the current configuration and how long any divergence
-has held.
+**Gauge faces** answer "is this high?" without requiring memory. A score of
++0.84 is not interpretable; a percentile is, so the percentile carries equal
+type weight to the score and rides with its effective start date and
+observation count — "87th pct since 2005 · 3,539 obs" is a different claim
+from "87th pct since 2019". Each face also carries the full distribution as
+a density curve behind the needle, the zone bands as labelled arcs, the
+high/low range over the selected timeframe, and dated reference marks
+(Sep 2008, Mar 2020, Sep 2022, record high/low, trailing-12m high/low).
+Marks flagged `*` are computed from the sub-indices that existed at that
+date — partial, and flagged rather than silently dropped or fabricated.
+Pressure draws a solid graded rail, Altitude a hatched one, because the
+failure mode is reading one face for the other.
+
+**Velocity, not just level.** A slow drift into UNSETTLED and a two-week
+collapse into it are different events, so each gauge reports its 20-session
+change, that change's percentile against its own history of changes, a
+slope glyph, and how long it has held its direction and its band:
+`↘ Falling 11 sessions · velocity 59th pct · 1 session in this band`.
+
+### Two percentiles, and why the split matters
+
+- **`percentileLive`** — today's score against all available history. The
+  honest headline *for today*, because today does have all of history.
+- **`percentilePIT`** — point-in-time: each historical date ranked only
+  against observations strictly before it. **The only percentile the
+  backtest, the zone classification and the change log may use.**
+
+Ranking March 2009 against a distribution containing 2020 would give the
+gauge a calibration it could not possibly have had and would make the
+backtest look better than it was. The two are named distinctly in the code,
+`percentileLive` is never written into the per-date table, and the backtest
+chart plots PIT only. A PIT percentile is withheld entirely until 756
+observations precede it (~3 years); before that the gauge shows `—` rather
+than a number computed off a thin distribution.
+
+**Zones are percentile bands, not raw scores** (`ZONE_PCTS`, default
+20/50/75/90), so they keep meaning as the input set grows. They are drawn
+on the face at the score values of those percentiles, which is why the
+density curve underneath stays honest. The confirmed (post-hysteresis) band
+is outlined, so you can see when the needle has moved into the next band
+but the state has not yet flipped.
+
+**Divergence** is altitude at or above p75 *while pressure is falling* —
+the test is on pressure's direction, not its level, because "ALTITUDE
+EXTENDED · PRESSURE FAIR and falling" is exactly the configuration worth
+catching. It must persist 3 sessions to open, same as any regime flip. It
+runs ~4% of days across 27 episodes, median 10 days, longest 38 — and its
+duration is charted, because the whole nature of this configuration is to
+stay wrong for a long time before it is right.
 
 **Diagnostics (on-page, load-bearing):** the pairwise correlation matrix
 of every z-scored input (pairs |ρ| ≥ 0.7 flagged in red) and a

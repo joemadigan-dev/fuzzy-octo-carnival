@@ -473,14 +473,30 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .baro-gauge h3 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .g-regime { font-family: var(--font-num); font-size: 16px; font-weight: 700; letter-spacing: 0.06em; }
 .g-score { font-family: var(--font-num); font-size: 12px; color: var(--muted); }
+/* percentile carries equal weight to the score — the score alone is
+   nearly meaningless and the hierarchy must not suggest otherwise */
 .g-pct {
   font-family: var(--font-num);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--ink);
   border-bottom: 2px solid var(--ink);
 }
-.gauge-svg { width: 100%; height: auto; margin: 2px 0 6px; display: block; }
+.g-pct.thin { font-size: 12px; font-weight: 500; color: var(--muted); border-bottom-color: var(--rule); }
+.g-since { font-family: var(--font-num); font-size: 9.5px; color: var(--muted); letter-spacing: 0.04em; }
+.g-partial {
+  font-family: var(--font-num); font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--muted); border: 1px dashed var(--rule); padding: 0 4px;
+}
+.gauge-svg { width: 100%; height: auto; margin: 2px 0 4px; display: block; }
+.g-velocity {
+  font-family: var(--font-num); font-size: 11.5px; color: var(--ink);
+  border-top: 1px solid var(--rule); padding-top: 4px; margin-bottom: 6px;
+}
+.g-velocity .slope { font-size: 15px; font-weight: 700; margin-right: 4px; }
+.pct-caveat { max-width: 100ch; margin-bottom: 12px; }
+.div-live td { font-weight: 700; }
+.div-live .dur-bar { background: var(--down); opacity: 1; }
 .divergence-readout {
   font-family: var(--font-num);
   font-size: 12px;

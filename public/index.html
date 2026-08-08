@@ -72,9 +72,15 @@
       <div class="baro-gauge" id="gauge-altitude"></div>
     </div>
     <div class="divergence-readout" id="divergence-readout"></div>
+    <p class="sig-note pct-caveat">Percentiles rank each reading against this instrument's own record — "90th percentile"
+      means the gauge has stood here or higher on 10% of observed days, not that anything has a 10% chance of happening.
+      That record contains only a handful of genuine stress episodes, and days within an episode are not independent
+      observations. Zone bands sit at the 20th/50th/75th/90th percentiles. Marks flagged <b>*</b> are computed from the
+      sub-indices that existed at the time — partial, not fabricated, and not dropped. Historical percentiles are
+      point-in-time: each date is ranked only against what preceded it, so the backtest is never flattered by hindsight.</p>
 
     <div class="sig-backtest">
-      <h3>BACKTEST — BOTH LAYERS, INCLUDING WHERE EACH WAS WRONG · SHADED = DIVERGENCE</h3>
+      <h3>BACKTEST — POINT-IN-TIME PERCENTILE, BOTH LAYERS, INCLUDING WHERE EACH WAS WRONG · SHADED = DIVERGENCE</h3>
       <div id="backtest-chart"></div>
       <p class="sig-note">A barometer says pressure is dropping. It does not say when the rain starts, and it does not tell you to sell anything.</p>
     </div>

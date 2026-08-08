@@ -314,7 +314,10 @@
       if (!baro) {
         try {
           const res = await fetch('/api/barometer');
-          if (res.ok) baro = await res.json();
+          if (res.ok) {
+            baro = await res.json();
+            if (baro.zonePcts) window.__zonePcts = baro.zonePcts;
+          }
         } catch { /* body renders what it can */ }
       }
       renderBaroBody();
@@ -339,87 +342,131 @@
     renderBaroHead();
   });
 
-  // ── gauge face: zones, density, needle, reference marks, tf range ────
-  const ZONES = {
-    pressure: { bounds: [-1.0, -0.3, 0.3, 1.0], labels: ['STORM', 'UNSETTLED', 'CHANGE', 'FAIR', 'SET FAIR'] },
-    altitude: { bounds: [-0.5, 0.5, 1.0, 1.75], labels: ['GROUNDED', 'CLIMBING', 'HIGH', 'EXTENDED', 'STRATOSPHERIC'] },
+  // ── gauge face ──────────────────────────────────────────────────────
+  // Drawn in SCORE space so the density curve shows the real distribution,
+  // with the zone arcs placed at the score values of the percentile
+  // boundaries (20/50/75/90) that actually define the bands.
+  const ZONE_LABELS = {
+    pressure: ['STORM', 'UNSETTLED', 'CHANGE', 'FAIR', 'SET FAIR'],
+    altitude: ['GROUNDED', 'CLIMBING', 'HIGH', 'EXTENDED', 'STRATOSPHERIC'],
   };
 
-  function gaugeSvg(layerId, g, score) {
-    if (!g || score === null || score === undefined) return '';
-    const W = 640, H = 132, L = 14, R = 626;
-    const lo = Math.min(g.hist.min, -2.5), hi = Math.max(g.hist.max, 2.5);
-    const x = (s) => L + ((Math.max(lo, Math.min(hi, s)) - lo) / (hi - lo)) * (R - L);
-    const zones = ZONES[layerId];
+  function gaugeSvg(layerId, g, score, confirmed) {
+    if (!g || score === null || score === undefined || !g.zoneBounds?.length) return '';
+    const W = 640, H = 164, L = 40, R = 600;
+    const lo = Math.min(g.hist.min, score, ...g.refMarks.map((m) => m.score));
+    const hi = Math.max(g.hist.max, score, ...g.refMarks.map((m) => m.score));
+    const pad = (hi - lo) * 0.03 || 0.5;
+    const x = (s) => L + ((Math.max(lo - pad, Math.min(hi + pad, s)) - (lo - pad)) / ((hi + pad) - (lo - pad))) * (R - L);
+    const labels = ZONE_LABELS[layerId];
+    const isAlt = layerId === 'altitude';
     const parts = [];
 
-    // altitude zones hatched, pressure zones solid — the two faces must not
-    // be mistakable for each other
-    if (layerId === 'altitude') {
-      parts.push(`<defs><pattern id="hatch" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+    // The two faces must not be mistakable for each other: pressure is a
+    // solid graded rail, altitude a hatched one with a stepped tick ladder.
+    if (isAlt) {
+      parts.push(`<defs><pattern id="hatch-${layerId}" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
         <line x1="0" y1="0" x2="0" y2="5" stroke="#9a9d95" stroke-width="1.1"/></pattern></defs>`);
     }
-    const edges = [lo, ...zones.bounds, hi];
-    for (let i = 0; i < zones.labels.length; i++) {
+    const RAIL_Y = 70, RAIL_H = isAlt ? 15 : 20;
+    const edges = [lo - pad, ...g.zoneBounds, hi + pad];
+    for (let i = 0; i < labels.length; i++) {
       const x0 = x(edges[i]), x1 = x(edges[i + 1]);
-      // shading darkens toward the storm end (left for pressure, right for altitude)
-      const t = layerId === 'pressure' ? (zones.labels.length - 1 - i) : i;
-      const fill = layerId === 'altitude' ? 'url(#hatch)' : `rgba(23,25,28,${(0.05 + t * 0.075).toFixed(3)})`;
-      parts.push(`<rect x="${x0.toFixed(1)}" y="58" width="${(x1 - x0).toFixed(1)}" height="18" fill="${fill}" stroke="#b6b8b0" stroke-width="0.5"/>`);
-      if (layerId === 'altitude') {
-        parts.push(`<rect x="${x0.toFixed(1)}" y="58" width="${(x1 - x0).toFixed(1)}" height="18" fill="rgba(23,25,28,${(0.03 + t * 0.05).toFixed(3)})"/>`);
+      const shade = isAlt ? i : labels.length - 1 - i; // darkens toward storm
+      const fill = isAlt ? `url(#hatch-${layerId})` : `rgba(23,25,28,${(0.05 + shade * 0.08).toFixed(3)})`;
+      parts.push(`<rect x="${x0.toFixed(1)}" y="${RAIL_Y}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${RAIL_H}" fill="${fill}" stroke="#b6b8b0" stroke-width="0.6"/>`);
+      if (isAlt) {
+        parts.push(`<rect x="${x0.toFixed(1)}" y="${RAIL_Y}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${RAIL_H}" fill="rgba(23,25,28,${(0.03 + shade * 0.055).toFixed(3)})"/>`);
       }
-      const label = zones.labels[i];
-      const cx = (x0 + x1) / 2;
-      parts.push(`<text x="${cx.toFixed(1)}" y="70.5" text-anchor="middle" font-size="8" letter-spacing="0.08em"
-        fill="${t >= 3 ? '#edeee9' : '#5f635d'}" font-family="'Spline Sans Mono',monospace">${label}</text>`);
+      // only label a band that can actually hold its label
+      if (x1 - x0 > labels[i].length * 5.6) {
+        parts.push(`<text x="${((x0 + x1) / 2).toFixed(1)}" y="${RAIL_Y + RAIL_H / 2 + 2.8}" text-anchor="middle" font-size="7.5" letter-spacing="0.08em"
+          fill="${shade >= 3 ? '#edeee9' : '#5f635d'}" font-family="'Spline Sans Mono',monospace">${labels[i]}</text>`);
+      }
+      // the CONFIRMED zone (post-hysteresis) is outlined — the needle can
+      // sit in the next band for a couple of sessions before the state flips
+      if (confirmed && labels[i] === confirmed) {
+        parts.push(`<rect x="${x0.toFixed(1)}" y="${RAIL_Y - 2}" width="${Math.max(0, x1 - x0).toFixed(1)}" height="${RAIL_H + 4}"
+          fill="none" stroke="#17191c" stroke-width="1.6"/>`);
+      }
     }
+    // boundary ticks, labelled with the percentile that defines them
+    (window.__zonePcts || [20, 50, 75, 90]).forEach((pc, i) => {
+      const bx = x(g.zoneBounds[i]);
+      parts.push(`<line x1="${bx.toFixed(1)}" y1="${RAIL_Y - (isAlt ? 6 : 3)}" x2="${bx.toFixed(1)}" y2="${RAIL_Y + RAIL_H + 3}" stroke="#17191c" stroke-width="${isAlt ? 0.8 : 1.3}"/>
+        <text x="${bx.toFixed(1)}" y="${RAIL_Y - 8}" text-anchor="middle" font-size="6.5" fill="#8b8e88" font-family="'Spline Sans Mono',monospace">p${pc}</text>`);
+    });
 
     // density of the full score history behind the needle
     if (g.hist.bins.length) {
       const n = g.hist.bins.length;
       const bx = (i) => x(g.hist.min + ((i + 0.5) / n) * (g.hist.max - g.hist.min));
-      const pts = [`${x(g.hist.min).toFixed(1)},56`];
-      for (let i = 0; i < n; i++) pts.push(`${bx(i).toFixed(1)},${(56 - g.hist.bins[i] * 40).toFixed(1)}`);
-      pts.push(`${x(g.hist.max).toFixed(1)},56`);
+      const pts = [`${x(g.hist.min).toFixed(1)},${RAIL_Y - 12}`];
+      for (let i = 0; i < n; i++) pts.push(`${bx(i).toFixed(1)},${(RAIL_Y - 12 - g.hist.bins[i] * 44).toFixed(1)}`);
+      pts.push(`${x(g.hist.max).toFixed(1)},${RAIL_Y - 12}`);
       parts.push(`<polyline points="${pts.join(' ')}" fill="rgba(23,25,28,0.10)" stroke="#8b8e88" stroke-width="0.8"/>`);
     }
 
-    // timeframe hi–lo bracket (where has it BEEN in the selected window)
-    const tfr = g.tfRange?.[tf === 'y5' ? 'y' : tf];
+    // where it has been over the selected timeframe
+    const tfr = g.tfRange?.[tf];
     if (tfr) {
-      const x0 = x(tfr.lo), x1 = x(tfr.hi);
-      parts.push(`<line x1="${x0.toFixed(1)}" y1="82" x2="${x1.toFixed(1)}" y2="82" stroke="#17191c" stroke-width="2"/>
-        <line x1="${x0.toFixed(1)}" y1="78" x2="${x0.toFixed(1)}" y2="86" stroke="#17191c" stroke-width="1"/>
-        <line x1="${x1.toFixed(1)}" y1="78" x2="${x1.toFixed(1)}" y2="86" stroke="#17191c" stroke-width="1"/>
-        <text x="${((x0 + x1) / 2).toFixed(1)}" y="94" text-anchor="middle" font-size="7.5" fill="#5f635d"
+      const x0 = x(tfr.lo), x1 = x(tfr.hi), y = RAIL_Y + RAIL_H + 9;
+      parts.push(`<line x1="${x0.toFixed(1)}" y1="${y}" x2="${x1.toFixed(1)}" y2="${y}" stroke="#17191c" stroke-width="1.8"/>
+        <line x1="${x0.toFixed(1)}" y1="${y - 4}" x2="${x0.toFixed(1)}" y2="${y + 4}" stroke="#17191c" stroke-width="1"/>
+        <line x1="${x1.toFixed(1)}" y1="${y - 4}" x2="${x1.toFixed(1)}" y2="${y + 4}" stroke="#17191c" stroke-width="1"/>
+        <text x="${((x0 + x1) / 2).toFixed(1)}" y="${y + 11}" text-anchor="middle" font-size="7" fill="#5f635d"
           font-family="'Spline Sans Mono',monospace">${TF_LABEL[tf]} RANGE</text>`);
     }
 
-    // fixed historical reference marks: 2008 / 2020 / 2022 / recent peak.
-    // Crisis dates cluster tightly on the altitude face, so labels stagger
-    // onto a second row rather than overprinting each other.
+    // reference marks, staggered so clustered dates stay legible
     const marks = [...(g.refMarks ?? [])].sort((p, q) => p.score - q.score);
-    const rowEnds = [-Infinity, -Infinity, -Infinity]; // rightmost label edge per row
+    const rowEnds = [-Infinity, -Infinity, -Infinity, -Infinity];
+    const BASE = RAIL_Y + RAIL_H + 26;
     for (const m of marks) {
       const mx = x(m.score);
-      const half = (`${m.label} ${m.score.toFixed(1)}`.length * 4.6) / 2;
-      let row = rowEnds.findIndex((end) => mx - half > end);
+      const text = `${m.label}${m.partial ? '*' : ''} ${m.score.toFixed(1)}`;
+      const half = (text.length * 4.5) / 2;
+      // keep the label inside the frame even when its tick sits at the edge
+      const lx = Math.max(L + half, Math.min(R - half, mx));
+      let row = rowEnds.findIndex((e) => lx - half > e);
       if (row < 0) row = 0;
-      rowEnds[row] = mx + half + 4;
-      const ty = 100 + row * 13;
-      parts.push(`<line x1="${mx.toFixed(1)}" y1="52" x2="${mx.toFixed(1)}" y2="${(ty - 8).toFixed(1)}" stroke="#17191c" stroke-width="0.9" stroke-dasharray="2 2"/>
-        <text x="${mx.toFixed(1)}" y="${ty}" text-anchor="middle" font-size="7.5" fill="#5f635d"
-          font-family="'Spline Sans Mono',monospace">${m.label} <tspan fill="#8b8e88">${m.score.toFixed(1)}</tspan></text>`);
+      rowEnds[row] = lx + half + 4;
+      const ty = BASE + row * 12;
+      parts.push(`<line x1="${mx.toFixed(1)}" y1="${RAIL_Y - 4}" x2="${mx.toFixed(1)}" y2="${(ty - 8).toFixed(1)}" stroke="#17191c" stroke-width="0.9" stroke-dasharray="2 2"/>
+        <text x="${lx.toFixed(1)}" y="${ty}" text-anchor="middle" font-size="7.5" fill="#5f635d"
+          font-family="'Spline Sans Mono',monospace">${m.label}${m.partial ? '*' : ''} <tspan fill="#8b8e88">${m.score.toFixed(1)}</tspan></text>`);
     }
 
     // needle
     const nx = x(score);
-    parts.push(`<line x1="${nx.toFixed(1)}" y1="12" x2="${nx.toFixed(1)}" y2="80" stroke="#17191c" stroke-width="2"/>
-      <path d="M ${(nx - 5).toFixed(1)} 6 L ${(nx + 5).toFixed(1)} 6 L ${nx.toFixed(1)} 14 Z" fill="#17191c"/>`);
+    parts.push(`<line x1="${nx.toFixed(1)}" y1="14" x2="${nx.toFixed(1)}" y2="${RAIL_Y + RAIL_H}" stroke="#17191c" stroke-width="2.2"/>
+      <path d="M ${(nx - 5.5).toFixed(1)} 7 L ${(nx + 5.5).toFixed(1)} 7 L ${nx.toFixed(1)} 15 Z" fill="#17191c"/>`);
 
     return `<svg viewBox="0 0 ${W} ${H}" class="gauge-svg" role="img"
-      aria-label="${layerId} gauge: score ${score.toFixed(2)}, ${g.percentile === null ? '' : Math.round(g.percentile) + 'th percentile'}">${parts.join('')}</svg>`;
+      aria-label="${layerId} gauge: score ${score.toFixed(2)}, ${g.percentileLive === null ? 'percentile unavailable' : Math.round(g.percentileLive) + 'th percentile'}">${parts.join('')}</svg>`;
+  }
+
+  // slope arrow off the velocity z-score — level alone is half the story
+  function slopeGlyph(vz) {
+    if (vz === null || vz === undefined) return '';
+    if (vz >= 1.5) return '⇗';
+    if (vz >= 0.4) return '↗';
+    if (vz <= -1.5) return '⇘';
+    if (vz <= -0.4) return '↘';
+    return '→';
+  }
+
+  function velocityLine(layerId, g) {
+    if (!g || g.velocity === null) return '';
+    const dir = g.velocity > 0 ? 'Rising' : g.velocity < 0 ? 'Falling' : 'Flat';
+    const dur = g.daysInDirection >= 14
+      ? `${Math.round(g.daysInDirection / 7)} weeks`
+      : `${g.daysInDirection} sessions`;
+    const fast = g.velocityPct !== null && g.velocityPct >= 90 ? ' <b>fast</b>' : '';
+    const pctTxt = g.velocityPct === null ? '' : ` · velocity ${ordinal(g.velocityPct)} pct`;
+    const zoneTxt = g.daysInZone ? ` · ${g.daysInZone} sessions in this band` : '';
+    return `<div class="g-velocity"><span class="slope">${slopeGlyph(g.velocityZ)}</span>
+      ${dir}${fast} ${dur}${pctTxt}${zoneTxt}</div>`;
   }
 
   const ordinal = (n) => { const v = Math.round(n); const s = ['th', 'st', 'nd', 'rd'], k = v % 100; return v + (s[(k - 20) % 10] || s[k] || s[0]); };
@@ -446,15 +493,24 @@
       return subRow + inputRows;
     }).join('');
     const g = d.gauge;
-    const pctTxt = g?.percentile === null || g?.percentile === undefined
-      ? ''
-      : `<span class="g-pct">${ordinal(g.percentile)} pct${g.firstDate ? ' since ' + g.firstDate.slice(0, 4) : ''}</span>`;
+    // Percentile carries equal visual weight to the score: the raw score is
+    // nearly meaningless alone, and the type hierarchy must not imply
+    // otherwise. The effective start date rides with it, because "87th pct
+    // since 2005" is a different claim from "87th pct since 2019".
+    const pctTxt = g?.percentileLive === null || g?.percentileLive === undefined
+      ? '<span class="g-pct thin">— pct (history too thin)</span>'
+      : `<span class="g-pct">${ordinal(g.percentileLive)} pct</span>` +
+        `<span class="g-since">since ${g.firstDate ? g.firstDate.slice(0, 4) : '—'} · ${g.obs.toLocaleString('en-US')} obs</span>`;
+    const partial = g?.partialNow ? '<span class="g-partial">PARTIAL INPUTS</span>' : '';
     return `
-      <h3>${title} <span class="g-regime" data-tone="${tone}">${d.regime ?? '—'}</span>
-        <span class="g-score">${d.score === null ? '' : (d.score > 0 ? '+' : '') + d.score.toFixed(2)}</span>
-        ${pctTxt}</h3>
+      <h3>${title}
+        <span class="g-regime" data-tone="${tone}">${d.regime ?? '—'}</span>
+        ${pctTxt}
+        <span class="g-score">score ${d.score === null ? '—' : (d.score > 0 ? '+' : '') + d.score.toFixed(2)}</span>
+        ${partial}</h3>
       <p class="sig-note">${subtitle}</p>
-      ${gaugeSvg(layerId, g, d.score)}
+      ${gaugeSvg(layerId, g, d.score, d.regime)}
+      ${velocityLine(layerId, g)}
       <table class="sig-inputs">
         <tr><th>SUB-INDEX / INPUT</th><th>WT</th><th>Z</th><th>CONTRIB</th></tr>
         ${rows}
@@ -467,16 +523,21 @@
     const p = baro?.barometer?.pressure?.[zwin];
     const a = baro?.barometer?.altitude?.[zwin];
     if (!p || !a) return '';
-    const trend = (t) => t === null || t === undefined ? '' : t > 0.05 ? ' and rising' : t < -0.05 ? ' and falling' : ' and steady';
+    const trend = (g) => {
+      const v = g?.velocity;
+      if (v === null || v === undefined) return '';
+      return v > 0.02 ? ' and rising' : v < -0.02 ? ' and falling' : ' and steady';
+    };
+    const pctOf = (g) => g?.percentileLive === null || g?.percentileLive === undefined
+      ? '' : ` (${ordinal(g.percentileLive)} pct)`;
     const dv = baro?.divergence?.[zwin] ?? wall?.barometer?.divergence?.[zwin];
-    let tail = 'no divergence';
+    let tail = 'no divergence open';
     if (dv?.active) {
       const wks = Math.round(dv.days / 7);
-      tail = `DIVERGENCE holding ${dv.days >= 14 ? wks + ' weeks' : dv.days + ' days'} (since ${dv.since})`;
+      tail = `<b>DIVERGENCE</b> holding ${dv.days >= 14 ? wks + ' weeks' : dv.days + ' days'} (since ${dv.since})`;
     }
-    const aPct = a.gauge?.percentile !== null && a.gauge?.percentile !== undefined ? ` (${ordinal(a.gauge.percentile)} pct)` : '';
-    const pPct = p.gauge?.percentile !== null && p.gauge?.percentile !== undefined ? ` (${ordinal(p.gauge.percentile)} pct)` : '';
-    return `ALTITUDE: <b>${a.regime}</b>${aPct}${trend(a.gauge?.trend30d)} · PRESSURE: <b>${p.regime}</b>${pPct}${trend(p.gauge?.trend30d)} — ${tail}`;
+    return `ALTITUDE <b>${a.regime}</b>${pctOf(a.gauge)}${trend(a.gauge)}`
+      + ` · PRESSURE <b>${p.regime}</b>${pctOf(p.gauge)}${trend(p.gauge)} — ${tail}`;
   }
 
   function renderBaroBody() {
@@ -547,21 +608,24 @@
     const h = baro?.history;
     if (!h?.t?.length) { host.textContent = 'backtest loads from /api/barometer'; return; }
     if (backtestPlot) { backtestPlot.destroy(); backtestPlot = null; }
-    const pKey = zwin === '2y' ? 'p_2y' : 'p_5y';
-    const aKey = zwin === '2y' ? 'a_2y' : 'a_5y';
+    // POINT-IN-TIME percentiles only. Plotting the live percentile here
+    // would rank every historical date against its own future.
+    const pKey = zwin === '2y' ? 'pp_2y' : 'pp_5y';
+    const aKey = zwin === '2y' ? 'ap_2y' : 'ap_5y';
     const dKey = zwin === '2y' ? 'div_2y' : 'div_5y';
     const w = host.clientWidth || 900;
     backtestPlot = new uPlot({
-      width: w, height: 220,
-      scales: { x: { time: true } },
+      width: w, height: 230,
       axes: [
         { stroke: MUTED, grid: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace' },
-        { stroke: MUTED, grid: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace' },
+        { stroke: MUTED, grid: { stroke: GRID }, font: '10px "Spline Sans Mono", monospace',
+          values: (u, sp) => sp.map((v) => v + '%') },
       ],
+      scales: { x: { time: true }, y: { range: [0, 100] } },
       series: [
         {},
-        { label: 'PRESSURE', stroke: INK, width: 1.4, points: { show: false } },
-        { label: 'ALTITUDE', stroke: MUTED, width: 1.2, dash: [4, 3], points: { show: false } },
+        { label: 'PRESSURE pct', stroke: INK, width: 1.4, points: { show: false } },
+        { label: 'ALTITUDE pct', stroke: MUTED, width: 1.2, dash: [4, 3], points: { show: false } },
       ],
       legend: { show: true },
       cursor: { y: false },
@@ -582,6 +646,15 @@
               ctx.fillRect(x0, u.bbox.top, Math.max(1.5, x1 - x0), u.bbox.height);
               start = null;
             }
+          }
+          // zone boundaries: the bands are percentile-defined, so they are
+          // fixed horizontal lines here and the chart reads directly
+          // against the gauge faces
+          ctx.strokeStyle = '#b6b8b0';
+          ctx.setLineDash([3, 3]);
+          for (const pc of (window.__zonePcts || [20, 50, 75, 90])) {
+            const y = u.valToPos(pc, 'y', true);
+            ctx.beginPath(); ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
           }
           ctx.restore();
         }],
@@ -638,15 +711,20 @@
           <td>${l.scoreDelta === null ? '—' : (l.scoreDelta > 0 ? '+' : '') + l.scoreDelta.toFixed(2)}</td>
         </tr>`).join('')}`;
 
-    // duration chart: the whole nature of divergence is that it persists
-    // longer than expected before resolving — show how long each one held
-    const eps = (diag.divergenceEpisodes ?? []).filter((e) => e.window === zwin);
+    // Duration chart. The configuration this instrument exists to catch is
+    // one that persists a long time before it resolves, so length — not
+    // presence — is the honest thing to display.
+    const eps = (diag.divergenceEpisodes ?? []).filter((e) => e.window === zwin)
+      .map((e) => ({ ...e, days: Math.round((Date.parse(e.end) - Date.parse(e.start)) / 86400000) + 1 }));
+    const dv = baro?.divergence?.[zwin];
+    if (dv?.active && dv.since) eps.push({ start: dv.since, end: 'now', days: dv.days, live: true });
+    const maxDays = Math.max(1, ...eps.map((e) => e.days));
     $('div-table').innerHTML = eps.length
-      ? `<tr><th>START</th><th>END</th><th>HELD</th></tr>` + eps.map((e) => {
-          const days = Math.round((Date.parse(e.end) - Date.parse(e.start)) / 86400000) + 1;
-          return `<tr><td>${e.start}</td><td>${e.end}</td>
-            <td><span class="dur-bar" style="width:${Math.min(140, days * 2)}px"></span> ${days}d</td></tr>`;
-        }).join('')
+      ? `<tr><th>START</th><th>END</th><th>HELD</th></tr>` + eps.map((e) => `
+          <tr class="${e.live ? 'div-live' : ''}">
+            <td>${e.start}</td><td>${e.end}</td>
+            <td><span class="dur-bar" style="width:${Math.max(2, Math.round((e.days / maxDays) * 150))}px"></span> ${e.days}d${e.live ? ' · OPEN' : ''}</td>
+          </tr>`).join('')
       : '<tr><td>none in the backtest window</td></tr>';
   }
 

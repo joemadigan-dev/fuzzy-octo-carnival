@@ -185,12 +185,17 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
 
     // precomputed backtest chart (both layers, downsampled) — the request
     // path serves this row verbatim
+    // Backtest chart carries POINT-IN-TIME percentiles only. Plotting the
+    // live percentile here would rank 2009 against 2020 and flatter the
+    // gauge with hindsight it never had.
     const hist = result.history.filter((h) => h.p_2y !== null || h.a_2y !== null || h.p_5y !== null || h.a_5y !== null);
     const ds = downsampleRows(hist, BARO_CHART_MAX);
     stmts.push(chartStmt.bind('__barometer', 'hist', JSON.stringify({
       t: ds.map((h) => Math.floor(Date.parse(h.date + 'T00:00:00Z') / 1000)),
       p_2y: ds.map((h) => h.p_2y), p_5y: ds.map((h) => h.p_5y),
       a_2y: ds.map((h) => h.a_2y), a_5y: ds.map((h) => h.a_5y),
+      pp_2y: ds.map((h) => h.pp_2y), pp_5y: ds.map((h) => h.pp_5y),
+      ap_2y: ds.map((h) => h.ap_2y), ap_5y: ds.map((h) => h.ap_5y),
       div_2y: ds.map((h) => h.div_2y), div_5y: ds.map((h) => h.div_5y),
     })));
 
@@ -202,15 +207,30 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
     const needFull = !stored?.d || (stored.n ?? 0) + 120 < hist.length;
     const histFrom = needFull ? '0000-00-00' : isoDaysAgo(stored!.d!, 90);
     const histStmt = env.DB.prepare(
-      `INSERT INTO barometer_history (date, p_2y, p_5y, a_2y, a_5y, pr_2y, pr_5y, ar_2y, ar_5y, div_2y, div_5y)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      `INSERT INTO barometer_history (date, p_2y, p_5y, a_2y, a_5y, pp_2y, pp_5y, ap_2y, ap_5y, pr_2y, pr_5y, ar_2y, ar_5y, div_2y, div_5y)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(date) DO UPDATE SET p_2y=excluded.p_2y, p_5y=excluded.p_5y, a_2y=excluded.a_2y, a_5y=excluded.a_5y,
+         pp_2y=excluded.pp_2y, pp_5y=excluded.pp_5y, ap_2y=excluded.ap_2y, ap_5y=excluded.ap_5y,
          pr_2y=excluded.pr_2y, pr_5y=excluded.pr_5y, ar_2y=excluded.ar_2y, ar_5y=excluded.ar_5y,
          div_2y=excluded.div_2y, div_5y=excluded.div_5y`,
     );
     for (const h of result.history) {
       if (h.date >= histFrom) {
-        stmts.push(histStmt.bind(h.date, h.p_2y, h.p_5y, h.a_2y, h.a_5y, h.pr_2y, h.pr_5y, h.ar_2y, h.ar_5y, h.div_2y, h.div_5y));
+        stmts.push(histStmt.bind(h.date, h.p_2y, h.p_5y, h.a_2y, h.a_5y,
+          h.pp_2y, h.pp_5y, h.ap_2y, h.ap_5y,
+          h.pr_2y, h.pr_5y, h.ar_2y, h.ar_5y, h.div_2y, h.div_5y));
+      }
+    }
+
+    // distribution + reference marks: slowly-changing, kept out of the
+    // per-date table
+    const gaugeStmt = env.DB.prepare(
+      `INSERT INTO gauge_meta (layer, window, computed_at, detail) VALUES (?,?,?,?)
+       ON CONFLICT(layer, window) DO UPDATE SET computed_at=excluded.computed_at, detail=excluded.detail`,
+    );
+    for (const layer of ['pressure', 'altitude'] as const) {
+      for (const w of ['2y', '5y'] as const) {
+        stmts.push(gaugeStmt.bind(layer, w, nowIso, JSON.stringify(result.detail[layer][w].gauge)));
       }
     }
 

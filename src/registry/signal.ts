@@ -68,29 +68,51 @@ export const Z_WINDOWS = {
 } as const;
 export type ZWindow = keyof typeof Z_WINDOWS;
 
-/** Pressure face — labels off a real barometer, ordered good → bad. */
-export const PRESSURE_REGIMES = ['SET FAIR', 'FAIR', 'CHANGE', 'UNSETTLED', 'STORM'] as const;
+/** Pressure face — labels off a real barometer, ordered worst → best.
+ *  (Index 0 is the low-percentile end of the scale.) */
+export const PRESSURE_REGIMES = ['STORM', 'UNSETTLED', 'CHANGE', 'FAIR', 'SET FAIR'] as const;
 export type PressureRegime = (typeof PRESSURE_REGIMES)[number];
-export const PRESSURE_THRESHOLDS = { setFairAt: 1.0, fairAt: 0.3, unsettledBelow: -0.3, stormBelow: -1.0 };
 
 /** Altitude gauge — its own scale, never summed with Pressure. The labels
  *  communicate STRETCH, not imminence: the wrong reading of a high number
- *  is "sell now", and the vocabulary should make that misreading harder. */
+ *  is "sell now", and the vocabulary should make that misreading harder.
+ *  Ordered low → high, same as Pressure's index order. */
 export const ALTITUDE_REGIMES = ['GROUNDED', 'CLIMBING', 'HIGH', 'EXTENDED', 'STRATOSPHERIC'] as const;
 export type AltitudeRegime = (typeof ALTITUDE_REGIMES)[number];
-export const ALTITUDE_THRESHOLDS = { groundedBelow: -0.5, highAt: 0.5, extendedAt: 1.0, stratosphericAt: 1.75 };
+
+/** Zone boundaries are PERCENTILE thresholds, not raw scores, so the bands
+ *  keep meaning as the input set grows. A score of +0.84 is not
+ *  interpretable; "above 90% of its own history" is.
+ *  Bands: [0,20) [20,50) [50,75) [75,90) [90,100]. */
+export const ZONE_PCTS = [20, 50, 75, 90] as const;
+
+/** Observations required before a point-in-time percentile is published.
+ *  ~3 years of business days; below this the distribution is too thin and
+ *  the gauge shows — rather than a number. */
+export const PIT_MIN_OBS = 756;
+
+/** Rate-of-change horizon for the velocity readout, in observations. */
+export const VELOCITY_OBS = 20;
 
 /** A regime flip must persist this many consecutive sessions. */
 export const HYSTERESIS_DAYS = 3;
 
-/** The configuration that precedes a bust: high altitude + falling
- *  pressure. Logged and highlighted specifically. */
+/** The configuration that precedes a bust: altitude genuinely stretched
+ *  while pressure is FALLING. The test is on pressure's direction, not its
+ *  level — "ALTITUDE EXTENDED · PRESSURE FAIR and falling" is precisely the
+ *  configuration worth catching, and a level test would miss it while
+ *  firing on every quiet day that happened to sit below the median. */
 export const DIVERGENCE = {
-  altitudeAtLeast: 'HIGH' as AltitudeRegime,
-  pressureAtMost: 'UNSETTLED' as PressureRegime,
+  /** altitude percentile at or above this (p75 = EXTENDED and up) */
+  altitudePctAtLeast: 75,
+  /** pressure 20-obs change below this (falling) */
+  pressureVelocityBelow: 0,
 };
 
-/** Fixed historical reference marks drawn on both gauge faces. */
+/** Fixed historical reference marks drawn on both gauge faces. These do
+ *  more work than the percentile does — "below where this stood in March
+ *  2020" is legible in a way "87th percentile" is not. All-time and
+ *  trailing-12m extremes are derived, not listed here. */
 export const GAUGE_REF_DATES = [
   { label: 'SEP 08', date: '2008-09-15' },
   { label: 'MAR 20', date: '2020-03-16' },

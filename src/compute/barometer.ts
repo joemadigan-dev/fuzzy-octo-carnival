@@ -10,7 +10,8 @@ import type { Point } from '../sources/types.ts';
 import { KPIS, kpiById, type KpiDef, type Freq } from '../registry/kpis.ts';
 import {
   LAYERS, Z_WINDOWS, HYSTERESIS_DAYS, MIN_COVERAGE, CORR_FLAG, DIVERGENCE, GAUGE_REF_DATES,
-  PRESSURE_REGIMES, PRESSURE_THRESHOLDS, ALTITUDE_REGIMES, ALTITUDE_THRESHOLDS,
+  ZONE_PCTS, PIT_MIN_OBS, VELOCITY_OBS,
+  PRESSURE_REGIMES, ALTITUDE_REGIMES,
   type LayerId, type ZWindow, type PressureRegime, type AltitudeRegime,
 } from '../registry/signal.ts';
 import { rollingZScore, isoDaysAgo } from './stats.ts';
@@ -37,14 +38,46 @@ export interface SubDetail {
 }
 
 /** Everything the gauge face needs: distribution, percentile, reference
- *  marks, recent range — "is this high?" answered without memory. */
+ *  marks, recent range, velocity — "is this high?" answered without memory.
+ *
+ *  TWO PERCENTILES, DELIBERATELY DISTINCT — do not interchange them:
+ *   · percentileLive — today's score against ALL available history. The
+ *     honest headline for today, because today does have all of history.
+ *     NEVER plot this across a historical chart.
+ *   · percentilePIT — point-in-time, expanding window: each date ranked
+ *     against observations strictly BEFORE it. The only figure the
+ *     backtest, the zone classification and the analogue engine may use.
+ *     Ranking March 2009 against a distribution containing 2020 would
+ *     give the gauge a calibration it could not have had, and would make
+ *     the backtest look better than it was.
+ */
+export interface RefMark {
+  label: string;
+  date: string;
+  score: number;
+  pct: number | null;   // point-in-time percentile at that date
+  partial: boolean;     // some sub-indices had no data then — flagged, not dropped
+}
+
 export interface GaugeData {
-  percentile: number | null;      // current score vs full history
-  firstDate: string | null;       // "since 2002-…"
+  percentileLive: number | null;
+  percentilePIT: number | null;   // today's PIT value; ≈ live, kept for audit
+  firstDate: string | null;       // effective start of the distribution
+  pitFirstDate: string | null;    // first date a PIT percentile was publishable
+  obs: number;                    // size of the distribution behind the number
   hist: { bins: number[]; min: number; max: number };
-  refMarks: { label: string; date: string; score: number }[];
-  tfRange: Record<'d' | 'w' | 'm' | 'y', { lo: number; hi: number } | null>;
-  trend30d: number | null;        // score change vs ~30 days ago
+  /** Score values at the ZONE_PCTS percentiles — the zone arcs are drawn
+   *  here, so percentile-defined bands sit correctly over a score-space
+   *  density curve. */
+  zoneBounds: number[];
+  refMarks: RefMark[];
+  tfRange: Record<'d' | 'w' | 'm' | 'y' | 'y5', { lo: number; hi: number } | null>;
+  velocity: number | null;        // 20-obs change in score
+  velocityZ: number | null;       // signed, vs its own history of changes
+  velocityPct: number | null;     // |change| vs history of |changes|
+  daysInDirection: number;        // consecutive obs with the same velocity sign
+  daysInZone: number;             // consecutive obs in the current zone
+  partialNow: boolean;            // today's reading is missing sub-indices
 }
 
 export interface LayerWindowDetail {
@@ -59,6 +92,9 @@ export interface HistoryRow {
   date: string;
   p_2y: number | null; p_5y: number | null;
   a_2y: number | null; a_5y: number | null;
+  /** point-in-time percentiles — the only ones safe to plot historically */
+  pp_2y: number | null; pp_5y: number | null;
+  ap_2y: number | null; ap_5y: number | null;
   pr_2y: Regime | null; pr_5y: Regime | null;
   ar_2y: Regime | null; ar_5y: Regime | null;
   div_2y: 0 | 1; div_5y: 0 | 1;
@@ -156,6 +192,7 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   // ── full pipeline for one (layer, window), optionally excluding an input
   function layerSeries(layerId: LayerId, w: ZWindow, exclude?: string): {
     scores: (number | null)[]; raws: (Regime | null)[]; regimes: (Regime | null)[];
+    pit: (number | null)[]; coverage: number[]; vel: (number | null)[];
     subZAt: Map<string, Map<string, number>>; // subId → date → z
   } {
     const layer = LAYERS.find((l) => l.id === layerId)!;
@@ -184,16 +221,23 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     }
 
     const scores: (number | null)[] = [];
+    const coverage: number[] = [];
     for (const date of dates) {
       let sum = 0, covered = 0;
       for (const sub of layer.subs) {
         const z = subZAt.get(sub.id)?.get(date);
         if (z !== undefined) { sum += sub.weight * z; covered += sub.weight; }
       }
+      coverage.push(covered);
       scores.push(covered >= MIN_COVERAGE ? (layer.polarity * sum) / covered : null);
     }
-    const raws = scores.map((s) => (s === null ? null : classify(layerId, s)));
-    return { scores, raws, regimes: applyHysteresis(raws), subZAt };
+
+    // Zones are percentile bands, and the percentile that decides a
+    // historical date's zone must be point-in-time — otherwise every
+    // pre-2020 classification is made with knowledge of 2020.
+    const pit = pitPercentiles(scores);
+    const raws = pit.map((p) => (p === null ? null : zoneOf(layerId, p)));
+    return { scores, raws, regimes: applyHysteresis(raws), pit, coverage, vel: velocitySeries(scores), subZAt };
   }
 
   const base: Record<LayerId, Record<ZWindow, ReturnType<typeof layerSeries>>> = {
@@ -202,22 +246,38 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   };
 
   // ── history + divergence ─────────────────────────────────────────────
+  // Altitude stretched AND pressure falling — direction, not level. A
+  // level test fires on any quiet day below the median, which is most of
+  // them, and would bury the configuration this instrument exists to catch.
   const divergence = (w: ZWindow, i: number): 0 | 1 => {
-    const a = base.altitude[w].regimes[i];
-    const p = base.pressure[w].regimes[i];
-    if (a === null || p === null) return 0;
-    const aHigh = ALTITUDE_REGIMES.indexOf(a as AltitudeRegime) >= ALTITUDE_REGIMES.indexOf(DIVERGENCE.altitudeAtLeast);
-    const pLow = PRESSURE_REGIMES.indexOf(p as PressureRegime) >= PRESSURE_REGIMES.indexOf(DIVERGENCE.pressureAtMost);
-    return aHigh && pLow ? 1 : 0;
+    const aPct = base.altitude[w].pit[i];
+    const pVel = base.pressure[w].vel[i];
+    if (aPct === null || pVel === null) return 0;
+    return aPct >= DIVERGENCE.altitudePctAtLeast && pVel < DIVERGENCE.pressureVelocityBelow ? 1 : 0;
+  };
+
+  // Persistence, consistent with regime hysteresis: the configuration must
+  // hold HYSTERESIS_DAYS consecutive sessions to count as open, and fail as
+  // many to count as closed. Without it the flag flickers on 1-2 day
+  // wobbles in pressure velocity and the duration chart becomes noise.
+  const divRaw: Record<ZWindow, (0 | 1)[]> = {
+    '2y': dates.map((_, i) => divergence('2y', i)),
+    '5y': dates.map((_, i) => divergence('5y', i)),
+  };
+  const divHeld: Record<ZWindow, (0 | 1)[]> = {
+    '2y': persist(divRaw['2y']),
+    '5y': persist(divRaw['5y']),
   };
 
   const history: HistoryRow[] = dates.map((date, i) => ({
     date,
     p_2y: r4(base.pressure['2y'].scores[i]), p_5y: r4(base.pressure['5y'].scores[i]),
     a_2y: r4(base.altitude['2y'].scores[i]), a_5y: r4(base.altitude['5y'].scores[i]),
+    pp_2y: r4(base.pressure['2y'].pit[i]), pp_5y: r4(base.pressure['5y'].pit[i]),
+    ap_2y: r4(base.altitude['2y'].pit[i]), ap_5y: r4(base.altitude['5y'].pit[i]),
     pr_2y: base.pressure['2y'].regimes[i], pr_5y: base.pressure['5y'].regimes[i],
     ar_2y: base.altitude['2y'].regimes[i], ar_5y: base.altitude['5y'].regimes[i],
-    div_2y: divergence('2y', i), div_5y: divergence('5y', i),
+    div_2y: divHeld['2y'][i], div_5y: divHeld['5y'][i],
   }));
 
   // ── change log with sub-index drivers ────────────────────────────────
@@ -282,7 +342,7 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
         regime: li < 0 ? null : b.regimes[li],
         rawRegime: li < 0 ? null : b.raws[li],
         subs,
-        gauge: buildGauge(layer.id, dates, b.scores, li),
+        gauge: buildGauge(layer.id, dates, b.scores, b.pit, b.coverage, b.regimes, li),
       };
     }
   }
@@ -361,13 +421,23 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   return { detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged }, loo, divergenceEpisodes } };
 }
 
-/** Distribution, percentile, reference marks and recent range for a layer's
- *  score history. `li` = index of the current (last non-null) score. */
-function buildGauge(layerId: LayerId, dates: string[], scores: (number | null)[], li: number): GaugeData {
+/** Everything behind the gauge face for one (layer, window). */
+function buildGauge(
+  layerId: LayerId,
+  dates: string[],
+  scores: (number | null)[],
+  pit: (number | null)[],
+  coverage: number[],
+  regimes: (Regime | null)[],
+  li: number,
+): GaugeData {
   const empty: GaugeData = {
-    percentile: null, firstDate: null,
-    hist: { bins: [], min: -2.5, max: 2.5 },
-    refMarks: [], tfRange: { d: null, w: null, m: null, y: null }, trend30d: null,
+    percentileLive: null, percentilePIT: null, firstDate: null, pitFirstDate: null, obs: 0,
+    hist: { bins: [], min: -2.5, max: 2.5 }, zoneBounds: [],
+    refMarks: [],
+    tfRange: { d: null, w: null, m: null, y: null, y5: null },
+    velocity: null, velocityZ: null, velocityPct: null,
+    daysInDirection: 0, daysInZone: 0, partialNow: false,
   };
   if (li < 0) return empty;
   const cur = scores[li]!;
@@ -375,50 +445,61 @@ function buildGauge(layerId: LayerId, dates: string[], scores: (number | null)[]
   const vals: number[] = [];
   let firstDate: string | null = null;
   for (let i = 0; i <= li; i++) {
-    if (scores[i] !== null) {
-      vals.push(scores[i]!);
-      if (!firstDate) firstDate = dates[i];
-    }
+    if (scores[i] === null) continue;
+    vals.push(scores[i]!);
+    if (!firstDate) firstDate = dates[i];
   }
+  let pitFirstDate: string | null = null;
+  for (let i = 0; i <= li; i++) if (pit[i] !== null) { pitFirstDate = dates[i]; break; }
 
-  let below = 0;
-  for (const v of vals) if (v <= cur) below++;
-  const percentile = (below / vals.length) * 100;
+  // headline: today ranked against everything, which today legitimately has
+  const percentileLive = rankPct(vals, cur);
 
-  const min = Math.min(-2.5, ...vals);
-  const max = Math.max(2.5, ...vals);
-  const NBINS = 40;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const min = sorted[0], max = sorted[sorted.length - 1];
+  const NBINS = 100;
   const bins = new Array(NBINS).fill(0);
-  for (const v of vals) {
-    bins[Math.min(NBINS - 1, Math.max(0, Math.floor(((v - min) / (max - min)) * NBINS)))]++;
-  }
+  const span = max - min || 1;
+  for (const v of vals) bins[Math.min(NBINS - 1, Math.floor(((v - min) / span) * NBINS))]++;
   const peak = Math.max(...bins, 1);
+  const zoneBounds = ZONE_PCTS.map((p) => quantile(sorted, p));
 
-  const refMarks: GaugeData['refMarks'] = [];
+  // ── reference marks ────────────────────────────────────────────────
+  const refMarks: RefMark[] = [];
+  const push = (label: string, i: number) => {
+    if (i < 0 || i > li || scores[i] === null) return;
+    if (refMarks.some((m) => m.date === dates[i] && m.label === label)) return;
+    refMarks.push({
+      label, date: dates[i], score: r4(scores[i])!, pct: r4(pit[i]),
+      // partial rather than dropped or fabricated: some sub-indices simply
+      // had no data that far back (sentiment starts later than credit)
+      partial: coverage[i] < 0.999,
+    });
+  };
   for (const ref of GAUGE_REF_DATES) {
     const idx = idxOnOrBefore(dates, ref.date);
-    if (idx >= 0 && scores[idx] !== null && dates[idx] >= isoDaysAgo(ref.date, 21)) {
-      refMarks.push({ label: ref.label, date: dates[idx], score: r4(scores[idx])! });
-    }
+    if (idx >= 0 && dates[idx] >= isoDaysAgo(ref.date, 21)) push(ref.label, idx);
   }
-  // most recent local peak: the past year's extremum in the storm direction
-  // (pressure: lowest; altitude: highest)
+  let hiIdx = -1, loIdx = -1, hi12 = -1, lo12 = -1;
   const yearAgo = isoDaysAgo(dates[li], 365);
-  let peakIdx = -1;
   for (let i = 0; i <= li; i++) {
-    if (dates[i] < yearAgo || scores[i] === null) continue;
-    if (peakIdx < 0
-      || (layerId === 'pressure' ? scores[i]! < scores[peakIdx]! : scores[i]! > scores[peakIdx]!)) {
-      peakIdx = i;
+    if (scores[i] === null) continue;
+    if (hiIdx < 0 || scores[i]! > scores[hiIdx]!) hiIdx = i;
+    if (loIdx < 0 || scores[i]! < scores[loIdx]!) loIdx = i;
+    if (dates[i] >= yearAgo) {
+      if (hi12 < 0 || scores[i]! > scores[hi12]!) hi12 = i;
+      if (lo12 < 0 || scores[i]! < scores[lo12]!) lo12 = i;
     }
   }
-  if (peakIdx >= 0 && peakIdx !== li) {
-    refMarks.push({ label: '1Y PEAK', date: dates[peakIdx], score: r4(scores[peakIdx])! });
-  }
+  push('RECORD HIGH', hiIdx);
+  push('RECORD LOW', loIdx);
+  if (hi12 !== hiIdx) push('12M HIGH', hi12);
+  if (lo12 !== loIdx) push('12M LOW', lo12);
 
-  const tfRange = { d: null, w: null, m: null, y: null } as GaugeData['tfRange'];
-  const HORIZON: Record<'d' | 'w' | 'm' | 'y', number> = { d: 1, w: 7, m: 30, y: 365 };
-  for (const tf of ['d', 'w', 'm', 'y'] as const) {
+  // ── range over each timeframe ──────────────────────────────────────
+  const tfRange = { d: null, w: null, m: null, y: null, y5: null } as GaugeData['tfRange'];
+  const HORIZON = { d: 1, w: 7, m: 30, y: 365, y5: 1826 } as const;
+  for (const tf of ['d', 'w', 'm', 'y', 'y5'] as const) {
     const from = isoDaysAgo(dates[li], HORIZON[tf]);
     let lo = Infinity, hi = -Infinity;
     for (let i = li; i >= 0 && dates[i] >= from; i--) {
@@ -429,22 +510,71 @@ function buildGauge(layerId: LayerId, dates: string[], scores: (number | null)[]
     if (lo <= hi) tfRange[tf] = { lo: r4(lo)!, hi: r4(hi)! };
   }
 
-  const t30 = idxOnOrBefore(dates, isoDaysAgo(dates[li], 30));
-  const trend30d = t30 >= 0 && scores[t30] !== null ? r4(cur - scores[t30]!) : null;
+  // ── velocity: level alone is half the information. A slow drift into
+  //    UNSETTLED and a two-week collapse into it are different events. ──
+  const idxs: number[] = [];
+  for (let i = 0; i <= li; i++) if (scores[i] !== null) idxs.push(i);
+  const deltas: number[] = [];
+  const deltaAt = new Map<number, number>();
+  for (let k = VELOCITY_OBS; k < idxs.length; k++) {
+    const d = scores[idxs[k]]! - scores[idxs[k - VELOCITY_OBS]]!;
+    deltas.push(d);
+    deltaAt.set(idxs[k], d);
+  }
+  let velocity: number | null = null, velocityZ: number | null = null, velocityPct: number | null = null;
+  let daysInDirection = 0;
+  if (deltas.length >= 30) {
+    velocity = deltaAt.get(li) ?? null;
+    const mean = deltas.reduce((s, x) => s + x, 0) / deltas.length;
+    const sd = Math.sqrt(deltas.reduce((s, x) => s + (x - mean) ** 2, 0) / deltas.length);
+    if (velocity !== null && sd > 1e-12) velocityZ = (velocity - mean) / sd;
+    // magnitude percentile: "how fast is this move" regardless of sign —
+    // the direction word beside it carries which way
+    if (velocity !== null) velocityPct = rankPct(deltas.map(Math.abs), Math.abs(velocity));
+    if (velocity !== null) {
+      const sign = Math.sign(velocity);
+      for (let k = idxs.length - 1; k >= 0; k--) {
+        const d = deltaAt.get(idxs[k]);
+        if (d === undefined || Math.sign(d) !== sign || sign === 0) break;
+        daysInDirection++;
+      }
+    }
+  }
+
+  // ── how long in the current zone ───────────────────────────────────
+  // counted on the DISPLAYED (hysteresis-applied) regime, so the readout
+  // matches the label beside it rather than the raw band
+  let daysInZone = 0;
+  const curZone = regimes[li];
+  if (curZone) {
+    for (let i = li; i >= 0 && regimes[i] === curZone; i--) daysInZone++;
+  }
 
   return {
-    percentile: r4(percentile),
+    percentileLive: r4(percentileLive),
+    percentilePIT: r4(pit[li]),
     firstDate,
+    pitFirstDate,
+    obs: vals.length,
     hist: { bins: bins.map((b: number) => r4(b / peak)!), min: r4(min)!, max: r4(max)! },
-    refMarks,
+    zoneBounds: zoneBounds.map((z) => r4(z)!),
+    refMarks: refMarks.sort((a, b) => a.score - b.score),
     tfRange,
-    trend30d,
+    velocity: r4(velocity),
+    velocityZ: r4(velocityZ),
+    velocityPct: r4(velocityPct),
+    daysInDirection,
+    daysInZone,
+    partialNow: coverage[li] < 0.999,
   };
 }
 
 /** Nearest-neighbour search on the current 5y-window z-vector across all
  *  history: cosine similarity over shared dimensions, ≥70% of today's
- *  dimensions required, candidates ≥180d old and ≥60d apart. */
+ *  dimensions required, candidates ≥180d old and ≥60d apart.
+ *  No look-ahead: the vector is built from ROLLING z-scores, each computed
+ *  from a trailing window only, so a 2009 candidate is described exactly as
+ *  it would have been described in 2009. */
 function findAnalogues(dates: string[], zsets: ZSet[], spx: Point[]): Analogue[] {
   if (!dates.length) return [];
   const today = dates[dates.length - 1];
@@ -516,6 +646,19 @@ function valAt(pts: Point[], date: string): Point | null {
   return ans >= 0 ? pts[ans] : null;
 }
 
+/** Require HYSTERESIS_DAYS consecutive sessions to flip a boolean state. */
+function persist(flags: (0 | 1)[]): (0 | 1)[] {
+  const out: (0 | 1)[] = new Array(flags.length).fill(0);
+  let state: 0 | 1 = 0, run = 0, runVal: 0 | 1 = 0;
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i] === runVal) run++;
+    else { runVal = flags[i]; run = 1; }
+    if (runVal !== state && run >= HYSTERESIS_DAYS) state = runVal;
+    out[i] = state;
+  }
+  return out;
+}
+
 function idxOnOrBefore(dates: string[], date: string): number {
   let lo = 0, hi = dates.length - 1, ans = -1;
   while (lo <= hi) {
@@ -528,21 +671,78 @@ function idxOnOrBefore(dates: string[], date: string): number {
 
 // ── helpers ────────────────────────────────────────────────────────────
 
-function classify(layer: LayerId, s: number): Regime {
-  if (layer === 'pressure') {
-    const t = PRESSURE_THRESHOLDS;
-    if (s >= t.setFairAt) return 'SET FAIR';
-    if (s >= t.fairAt) return 'FAIR';
-    if (s < t.stormBelow) return 'STORM';
-    if (s < t.unsettledBelow) return 'UNSETTLED';
-    return 'CHANGE';
+/** Percentile → zone. Both faces use the same band edges (ZONE_PCTS); the
+ *  vocabularies differ because the layers mean different things. Pressure
+ *  is already polarity-flipped at score time, so low percentile = STORM on
+ *  one face and GROUNDED on the other, consistently "low end of its own
+ *  history". */
+function zoneOf(layer: LayerId, pct: number): Regime {
+  const names = layer === 'pressure' ? PRESSURE_REGIMES : ALTITUDE_REGIMES;
+  let i = 0;
+  while (i < ZONE_PCTS.length && pct >= ZONE_PCTS[i]) i++;
+  return names[i] as Regime;
+}
+
+// ── percentile machinery ───────────────────────────────────────────────
+// A Fenwick tree over quantised score buckets keeps the expanding-window
+// rank O(n log n) instead of O(n²); at ~6k dates × 2 layers × 2 windows ×
+// 25 leave-one-out passes the quadratic version would blow the CPU budget.
+
+const Q_LO = -8, Q_HI = 8, Q_STEPS = 3200; // 0.005 resolution
+
+function bucket(v: number): number {
+  const t = (Math.max(Q_LO, Math.min(Q_HI, v)) - Q_LO) / (Q_HI - Q_LO);
+  return Math.min(Q_STEPS - 1, Math.max(0, Math.floor(t * Q_STEPS))) + 1;
+}
+
+class Fenwick {
+  private t = new Int32Array(Q_STEPS + 2);
+  add(i: number): void { for (; i <= Q_STEPS; i += i & -i) this.t[i]++; }
+  countUpTo(i: number): number { let s = 0; for (; i > 0; i -= i & -i) s += this.t[i]; return s; }
+}
+
+/** 20-observation change in the score, on the master date axis. */
+function velocitySeries(scores: (number | null)[]): (number | null)[] {
+  const out: (number | null)[] = new Array(scores.length).fill(null);
+  const idxs: number[] = [];
+  for (let i = 0; i < scores.length; i++) if (scores[i] !== null) idxs.push(i);
+  for (let k = VELOCITY_OBS; k < idxs.length; k++) {
+    out[idxs[k]] = scores[idxs[k]]! - scores[idxs[k - VELOCITY_OBS]]!;
   }
-  const t = ALTITUDE_THRESHOLDS;
-  if (s >= t.stratosphericAt) return 'STRATOSPHERIC';
-  if (s >= t.extendedAt) return 'EXTENDED';
-  if (s >= t.highAt) return 'HIGH';
-  if (s < t.groundedBelow) return 'GROUNDED';
-  return 'CLIMBING';
+  return out;
+}
+
+/** Point-in-time percentile for every entry: rank against observations
+ *  STRICTLY BEFORE it. Null until PIT_MIN_OBS priors exist — a percentile
+ *  off a thin distribution is a number pretending to be information. */
+function pitPercentiles(scores: (number | null)[]): (number | null)[] {
+  const fw = new Fenwick();
+  const out: (number | null)[] = new Array(scores.length).fill(null);
+  let n = 0;
+  for (let i = 0; i < scores.length; i++) {
+    const v = scores[i];
+    if (v === null) continue;
+    if (n >= PIT_MIN_OBS) out[i] = (fw.countUpTo(bucket(v)) / n) * 100;
+    fw.add(bucket(v));
+    n++;
+  }
+  return out;
+}
+
+/** Rank of one value against a full pool (used for today's live figure and
+ *  for velocity magnitudes). */
+function rankPct(pool: number[], v: number): number | null {
+  if (!pool.length) return null;
+  let below = 0;
+  for (const x of pool) if (x <= v) below++;
+  return (below / pool.length) * 100;
+}
+
+/** Score value at a given percentile of the pool (for the zone arcs). */
+function quantile(sorted: number[], pct: number): number {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.round((pct / 100) * sorted.length) - 1));
+  return sorted[idx];
 }
 
 function applyHysteresis(rawR: (Regime | null)[]): (Regime | null)[] {

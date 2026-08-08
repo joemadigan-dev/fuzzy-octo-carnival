@@ -3,6 +3,7 @@
 // get 10ms CPU per request; this path uses a fraction of that.
 
 import { KPIS, CLUSTERS, kpiById } from '../registry/kpis.ts';
+import { ZONE_PCTS } from '../registry/signal.ts';
 import { runScheduled, type Env as BaseEnv } from '../scheduled/index.ts';
 
 type Env = BaseEnv & { ASSETS?: Fetcher };
@@ -100,6 +101,8 @@ async function apiWall(env: Env): Promise<Response> {
       '2y': slim(detail.barometer?.[layer]?.['2y']),
       '5y': slim(detail.barometer?.[layer]?.['5y']),
     });
+    // headline percentile travels with the summary so the bezel can show
+    // "is this high?" without loading the full gauge payload
     barometer = {
       computedAt: signalRow.computed_at,
       pressure: pick('pressure'),
@@ -117,8 +120,14 @@ async function apiWall(env: Env): Promise<Response> {
   }, 200, 60);
 }
 
-function slim(d: { score?: number | null; regime?: string | null } | undefined) {
-  return d ? { score: d.score ?? null, regime: d.regime ?? null } : null;
+function slim(d: { score?: number | null; regime?: string | null; gauge?: Record<string, unknown> } | undefined) {
+  return d ? {
+    score: d.score ?? null,
+    regime: d.regime ?? null,
+    pct: (d.gauge?.percentileLive as number | null) ?? null,
+    since: (d.gauge?.firstDate as string | null) ?? null,
+    velocityZ: (d.gauge?.velocityZ as number | null) ?? null,
+  } : null;
 }
 
 async function apiBarometer(env: Env): Promise<Response> {
@@ -131,6 +140,7 @@ async function apiBarometer(env: Env): Promise<Response> {
   const detail = JSON.parse(state.detail);
   return json({
     computedAt: state.computed_at,
+    zonePcts: ZONE_PCTS,
     barometer: detail.barometer,
     divergence: detail.divergence,
     analogues: detail.analogues ?? [],
