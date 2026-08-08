@@ -200,11 +200,22 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
     })));
 
     // durable daily history — full write until scored rows exist, then a
-    // rolling 90-day window; count-based self-heal (see Phase 1 fix)
+    // rolling 90-day window; count-based self-heal (see Phase 1 fix).
+    // Row count alone is NOT enough: adding a column leaves every existing
+    // row present but unpopulated, and a 90-day window never reaches back
+    // to fill it. Compare stored PIT coverage against this run's too, so a
+    // schema addition heals itself on the next cron rather than leaving
+    // years of history silently stale.
     const stored = await env.DB.prepare(
       'SELECT COUNT(*) AS n, MAX(date) AS d FROM barometer_history WHERE p_2y IS NOT NULL OR a_2y IS NOT NULL OR p_5y IS NOT NULL OR a_5y IS NOT NULL',
     ).first<{ n: number; d: string | null }>();
-    const needFull = !stored?.d || (stored.n ?? 0) + 120 < hist.length;
+    const storedPit = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM barometer_history WHERE pp_2y IS NOT NULL OR ap_2y IS NOT NULL',
+    ).first<{ n: number }>();
+    const computedPit = result.history.filter((h) => h.pp_2y !== null || h.ap_2y !== null).length;
+    const needFull = !stored?.d
+      || (stored.n ?? 0) + 120 < hist.length
+      || (storedPit?.n ?? 0) + 120 < computedPit;
     const histFrom = needFull ? '0000-00-00' : isoDaysAgo(stored!.d!, 90);
     const histStmt = env.DB.prepare(
       `INSERT INTO barometer_history (date, p_2y, p_5y, a_2y, a_5y, pp_2y, pp_5y, ap_2y, ap_5y, pr_2y, pr_5y, ar_2y, ar_5y, div_2y, div_5y)
