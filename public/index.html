@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>THE WALL</title>
+<title>The Joe Madigan Financial Conditions Barometer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23101214'/%3E%3Crect x='2' y='9' width='3' height='5' fill='%230b6433'/%3E%3Crect x='6.5' y='5' width='3' height='9' fill='%23e8e9e4'/%3E%3Crect x='11' y='7' width='3' height='7' fill='%23dc4956'/%3E%3C/svg%3E">
-<meta name="description" content="Live macro KPI wall — credit, funding, sentiment, trend, and a transparent two-layer regime barometer.">
+<meta name="description" content="The Joe Madigan Financial Conditions Barometer — live macro KPIs across credit, funding, sentiment and trend, with a transparent two-layer regime signal.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Spline+Sans+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -15,7 +15,10 @@
 <body>
 
 <header class="bezel">
-  <div class="wordmark">THE&nbsp;WALL</div>
+  <div class="wordmark">
+    <span class="wm-owner">JOE&nbsp;MADIGAN</span>
+    <span class="wm-name">FINANCIAL&nbsp;CONDITIONS&nbsp;BAROMETER</span>
+  </div>
   <button class="baro-chip" id="chip-pressure" data-tone="" aria-label="Pressure — click for barometer detail">
     <span class="chip-k">PRESSURE</span><span class="chip-v" id="chip-pressure-v">—</span>
   </button>
@@ -45,9 +48,9 @@
   <!-- clusters + tiles rendered by app.js -->
 </main>
 
-<section class="signal-panel" id="signal-panel" aria-label="The Barometer — two-layer regime signal">
+<section class="signal-panel" id="signal-panel" aria-label="The barometer reading — pressure and altitude">
   <div class="signal-head">
-    <h2>THE BAROMETER</h2>
+    <h2>THE READING — PRESSURE &amp; ALTITUDE</h2>
     <span class="sig-regime" id="head-pressure" data-tone="">—</span>
     <span class="sig-sep">·</span>
     <span class="sig-regime" id="head-altitude" data-tone="">—</span>

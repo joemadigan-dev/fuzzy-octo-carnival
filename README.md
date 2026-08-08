@@ -1,10 +1,14 @@
-# THE WALL
+# The Joe Madigan Financial Conditions Barometer
 
 A public, single-screen wall of live macro KPIs on Cloudflare Workers + D1.
-Dense tiles — big number, green/red directional state, inline sparkline —
-grouped into labelled clusters, with THE BAROMETER: a transparent,
-backtested, two-layer regime signal. Runs permanently on the Cloudflare
-free tier.
+Dense tiles — big number, whole-tile green/red signal state, inline
+sparkline — grouped into labelled clusters, reading up into a transparent,
+backtested, two-layer regime signal (PRESSURE and ALTITUDE). Runs
+permanently on the Cloudflare free tier.
+
+**Live:** https://the-wall.joemadigan.workers.dev — the Worker id
+(`the-wall`) predates the rename and still owns the URL; changing it
+publishes a new worker at a new address, so it is left alone deliberately.
 
 **Clusters (53 tiles):** The Four Bodies (oil/gold/dollar/rates) · Credit
 stress · Funding & liquidity · Sentiment & positioning · Trend, breadth &
@@ -24,10 +28,10 @@ underlying data is daily; a socket would be theatre.
 
 ```
 /src/worker      request handler + API (reads only)
-/src/scheduled   cron job: fetch → compute → write
-/src/sources     DataSource implementations (fred, stooq, yahoo)
+/src/scheduled   cron job: fetch → compute → write; alerts + journal review
+/src/sources     DataSource implementations (fred, stooq, yahoo, cnn, naaim)
 /src/registry    kpis.ts (THE config file) + signal.ts (weights/thresholds)
-/src/compute     stats, derived metrics, wall state, composite signal
+/src/compute     stats, derived metrics, tile state, barometer + analogues
 /public          static frontend (vanilla JS + hand-rolled SVG sparklines + uPlot)
 /migrations      D1 schema
 /scripts         local-backfill harness for proxied sandboxes
@@ -85,8 +89,9 @@ npx wrangler deploy
 ### 5. First-run backfill
 
 The first pipeline run against an empty database automatically backfills
-5+ years of history per series (from 2015-01-01) — sparklines, z-scores and
-the backtest need it. Trigger it immediately rather than waiting for cron:
+history per series from `BACKFILL_START` (2000-01-01, capped by whatever
+depth each source actually offers) — sparklines, z-scores and the backtest
+need it. Trigger it immediately rather than waiting for cron:
 
 ```sh
 curl -X POST "https://<your-worker>.workers.dev/api/admin/refresh?token=<ADMIN_TOKEN>"
@@ -121,7 +126,8 @@ Add **one object** to `KPIS` in `src/registry/kpis.ts`. Nothing else.
   cluster: 'credit_stress',      // add the cluster to CLUSTERS if it's new
   unit: 'bp',
   decimals: 0,
-  direction: 'down_is_good',     // spreads widening = red
+  stressSign: 1,                 // rising spreads push toward storm = red
+  signRationale: 'Widening high-yield spreads are the front line of credit stress.',
   refresh: 'daily',
   source: 'fred',
   seriesId: 'BAMLH0A0HYM2',
@@ -140,10 +146,11 @@ appears. Optional fields: `fallback` (second real source tried when the
 primary fails), `showPct: false` (hide %-change — correlations, spreads),
 `staleAfterDays`, `unitPrefix`.
 
-Direction semantics are three-mode by design (`up_is_good`,
-`down_is_good`, `neutral`) — a spiking VIX rendered green would mislead at
-exactly the moment the wall matters most. Direction is also encoded
-redundantly (▲/▼ glyph + explicit sign), never colour alone.
+`stressSign` is the whole colour judgement (see *Colour semantics* below)
+— a spiking VIX rendered green would mislead at exactly the moment the
+barometer matters most. Direction is also encoded redundantly (▲/▼ glyph +
+explicit sign), never colour alone. To put the KPI into the signal itself,
+add `subIndex` / `subSign` (and optionally `subWeight`).
 
 ## How to add a data source
 
@@ -156,9 +163,9 @@ redundantly (▲/▼ glyph + explicit sign), never colour alone.
 That's all — KPIs reference sources by id; fetch logic never changes when
 KPIs are added.
 
-## THE BAROMETER
+## The reading — PRESSURE & ALTITUDE
 
-Two readings, displayed together, **never summed**:
+The barometer resolves to two readings, displayed together, **never summed**:
 
 - **PRESSURE** — is stress arriving now? Credit, funding, volatility
   structure, the Four Bodies. Falling pressure = deteriorating conditions.
@@ -166,8 +173,8 @@ Two readings, displayed together, **never summed**:
   UNSETTLED / STORM`.
 - **ALTITUDE** — how far is there to fall? Sentiment, trend extension,
   leverage/valuation, breadth. High altitude is a state, not an order —
-  melt-ups end *at* maximum altitude. Regimes: `LOW / MODERATE / HIGH /
-  EXTREME`.
+  melt-ups end *at* maximum altitude. Regimes name stretch rather than
+  imminence: `GROUNDED / CLIMBING / HIGH / EXTENDED / STRATOSPHERIC`.
 
 Weights apply to **sub-indices**, not raw inputs (`src/registry/signal.ts`);
 each sub-index is built from its members' z-scores (membership, sign, and
@@ -220,7 +227,7 @@ so axes stay readable.
 **The frame is systemic conditions, not portfolio P&L.** Green means the
 financial system is in better shape; it deliberately does not account for
 how anyone is positioned. Someone positioned for a bust would find a red
-wall encouraging, and the wall does not do that inversion for them — the
+wall encouraging, and the barometer does not do that inversion for them — the
 moment it colours by desired outcome it stops reporting on the world. A
 header line states this on the page.
 
@@ -267,7 +274,7 @@ the series' own daily move render neutral grey rather than a weak tint.
 - **AAII and CBOE endpoints hard-block non-browser clients** — per the
   no-stub rule, CNN Fear & Greed stands in for the survey read and its
   `put_call_options` series carries the real CBOE-derived put/call data
-  (~1y of history per fetch; the wall accumulates the rest).
+  (~1y of history per fetch; the store accumulates the rest).
 - **NAAIM** is scraped from the chart JSON embedded in naaim.org's own
   page, which lags the live survey by weeks — the tile shows STALE with
   its as-of date rather than pretending. Bear-capitulation inherits that

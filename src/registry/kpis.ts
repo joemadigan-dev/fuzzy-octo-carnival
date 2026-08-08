@@ -1,5 +1,6 @@
-// THE WALL — KPI registry. This file is the single source of truth.
-// Adding a KPI to the wall = adding ONE object to KPIS below. Nothing else.
+// THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER — KPI registry.
+// This file is the single source of truth. Adding a KPI = adding ONE
+// object to KPIS below. Nothing else.
 //
 //  - fetched KPI:  set `source` + `seriesId`
 //  - derived KPI:  set `derive` (computed in the cron job from other series)

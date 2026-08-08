@@ -129,7 +129,7 @@ async function deliver(env: Env, c: Candidate): Promise<string[]> {
       const res = await fetch(env.ALERT_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: `THE WALL — ${c.message}`, kind: c.kind, key: c.key, detail: c.detail ?? null }),
+        body: JSON.stringify({ text: `JM FINANCIAL CONDITIONS BAROMETER — ${c.message}`, kind: c.kind, key: c.key, detail: c.detail ?? null }),
       });
       if (res.ok) channels.push('webhook');
     } catch { /* recorded as undelivered */ }
@@ -140,9 +140,9 @@ async function deliver(env: Env, c: Candidate): Promise<string[]> {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${env.RESEND_API_KEY}` },
         body: JSON.stringify({
-          from: env.ALERT_EMAIL_FROM ?? 'the-wall@resend.dev',
+          from: env.ALERT_EMAIL_FROM ?? 'barometer@resend.dev',
           to: [env.ALERT_EMAIL_TO],
-          subject: `THE WALL · ${c.kind}: ${c.key}`,
+          subject: `JM BAROMETER · ${c.kind}: ${c.key}`,
           text: c.message,
         }),
       });

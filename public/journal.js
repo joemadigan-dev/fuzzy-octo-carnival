@@ -1,5 +1,6 @@
-/* THE WALL — decision journal. Token-gated, personal, never cached.
-   The wall shows the present tense; this remembers what you concluded from
+/* THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER — decision journal.
+   Token-gated, personal, never cached.
+   The barometer shows the present tense; this remembers what you concluded from
    it, and later fills in what actually happened. */
 
 (() => {

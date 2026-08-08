@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   THE WALL — design tokens
+   THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER — design tokens
    ───────────────────────────────────────────────────────────────────────
    Reference points: instrument panel, departure board, plant control room.
    Deliberate choices, and why:
@@ -95,12 +95,26 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   z-index: 10;
 }
 
+/* Nameplate lockup: owner line above the instrument name, so a 45-character
+   title still fits one dense header bar without crowding the readouts. */
 .wordmark {
   font-family: var(--font-label);
-  font-weight: 700;
-  font-size: 19px;
-  letter-spacing: 0.24em;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.06;
   white-space: nowrap;
+}
+.wm-owner {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  color: var(--bezel-muted);
+}
+.wm-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
 }
 
 .baro-chip {

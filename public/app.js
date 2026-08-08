@@ -1,4 +1,5 @@
-/* THE WALL — client. Polls /api/wall every 60s, diffs, animates the tick.
+/* THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER — client.
+   Polls /api/wall every 60s, diffs, animates the tick.
    All timeframes arrive in one payload, so the D/W/M/Y/5Y flip is instant
    and client-side. Barometer detail + diagnostics load lazily from
    /api/barometer. No frameworks. */

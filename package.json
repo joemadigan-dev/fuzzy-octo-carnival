@@ -1,7 +1,7 @@
 {
-  "name": "the-wall",
+  "name": "jm-financial-conditions-barometer",
   "version": "1.0.0",
-  "description": "THE WALL — a live macro KPI dashboard on Cloudflare Workers + D1.",
+  "description": "The Joe Madigan Financial Conditions Barometer — a live macro KPI dashboard on Cloudflare Workers + D1.",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,4 +1,9 @@
-# THE WALL — Cloudflare Workers + D1 + static assets, all free tier.
+# THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER
+# Cloudflare Workers + D1 + static assets, all free tier.
+# NOTE: `name` below is the Worker id and owns the public URL
+# (the-wall.joemadigan.workers.dev). Changing it publishes a NEW worker at
+# a new URL and leaves the old one serving — rename deliberately, not as a
+# side effect of retitling the product.
 name = "the-wall"
 main = "src/worker/index.ts"
 compatibility_date = "2026-08-01"

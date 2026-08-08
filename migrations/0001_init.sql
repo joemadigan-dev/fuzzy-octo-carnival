@@ -1,4 +1,4 @@
--- THE WALL — D1 schema.
+-- THE JOE MADIGAN FINANCIAL CONDITIONS BAROMETER — D1 schema.
 -- KPI metadata (label, cluster, unit, direction …) lives in code:
 -- src/registry/kpis.ts is the single source of truth, so adding a KPI is
 -- exactly one config object and zero SQL. The tables below hold only data.

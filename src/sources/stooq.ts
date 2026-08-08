@@ -43,7 +43,7 @@ export const stooq: DataSource = {
   id: 'stooq',
   async fetchSeries(seriesId: string, opts: FetchOpts): Promise<Point[]> {
     const res = await fetch(stooqCsvUrl(seriesId, opts), {
-      headers: { accept: 'text/csv', 'user-agent': 'the-wall/1.0 (macro dashboard)' },
+      headers: { accept: 'text/csv', 'user-agent': 'jm-barometer/1.0 (macro dashboard)' },
     });
     if (!res.ok) throw new Error(`stooq ${res.status} for ${seriesId}`);
     return parseStooqCsv(await res.text(), seriesId);

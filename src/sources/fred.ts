@@ -3,7 +3,7 @@ import type { DataSource, FetchOpts, Point, SourceEnv } from './types.ts';
 // FRED. Two real endpoints for the same data:
 //  1. official API (JSON) when FRED_API_KEY is set — preferred
 //  2. keyless fredgraph.csv fallback — same observations, no credentials
-// Both return actual FRED data; the fallback keeps the wall alive with zero
+// Both return actual FRED data; the fallback keeps the barometer alive with zero
 // secrets configured and covers local dev before a key exists.
 
 const API = 'https://api.stlouisfed.org/fred/series/observations';

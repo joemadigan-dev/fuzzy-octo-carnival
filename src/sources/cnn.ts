@@ -3,7 +3,7 @@ import type { DataSource, FetchOpts, Point } from './types.ts';
 // CNN Fear & Greed graphdata — real daily sentiment data, keyless. The
 // payload carries the composite plus its components (incl. put/call, which
 // is real CBOE-derived data; CBOE's own endpoints hard-block non-browser
-// clients). One year of history per fetch; the wall accumulates the rest.
+// clients). One year of history per fetch; the store accumulates the rest.
 // seriesId = a key in the payload: 'fear_and_greed_historical',
 // 'put_call_options', …
 
