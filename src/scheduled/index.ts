@@ -38,7 +38,13 @@ interface FetchOutcome {
   error?: string;
 }
 
-export async function runScheduled(env: Env, nowMs: number = Date.now()): Promise<string> {
+export interface RunOpts {
+  /** Allow CPU-expensive spreadsheet parses. True on the cron path (~30s
+   *  CPU); false from a fetch handler, which would exceed its budget. */
+  allowHeavy?: boolean;
+}
+
+export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: RunOpts = {}): Promise<string> {
   const nowIso = new Date(nowMs).toISOString();
   const today = nowIso.slice(0, 10);
   const log: string[] = [];
@@ -56,6 +62,15 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       const minRows = kpi.freq === 'quarterly' ? 10 : kpi.freq === 'weekly' ? 30
         : kpi.freq === 'monthly' ? 24 : 100;
       const needBackfill = !maxRow?.d || (maxRow.n ?? 0) < minRows;
+
+      // Large binary workbooks are parsed only where there is CPU budget
+      // for them. Skipping leaves the stored history untouched, so the
+      // tile keeps serving its last good values rather than erroring.
+      if (kpi.heavyParse && !opts.allowHeavy) {
+        outcomes.set(kpi.id, { points: [], ok: true });
+        log.push(`${kpi.id}: skipped (heavy parse, scheduled path only)`);
+        return;
+      }
 
       // Good-citizen throttle: slow-moving series on someone else's
       // personal academic server are fetched at most every N days. The

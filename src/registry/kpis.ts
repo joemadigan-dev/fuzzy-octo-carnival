@@ -78,6 +78,11 @@ export interface KpiDef {
   /** Minimum days between fetches for this series. Set for slow-moving
    *  sources on someone else's personal server — be a good citizen. */
   fetchIntervalDays?: number;
+  /** CPU-expensive to parse (large binary spreadsheets). Fetched only on
+   *  the SCHEDULED path, which has a ~30s CPU budget; a fetch handler gets
+   *  a fraction of that and would 1102. Force from the admin endpoint with
+   *  ?heavy=1 for a first backfill. */
+  heavyParse?: boolean;
   /** Multiplier applied to fetched values before storage — normalises
    *  provider units (e.g. WALCL publishes $mn; store $tn with 1e-6). */
   fetchScale?: number;
@@ -504,7 +509,7 @@ export const KPIS: KpiDef[] = [
     unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
     stressSign: -1,
     signRationale: 'Reads backwards to most people: a FALLING ERP means investors demand less compensation for equity risk — richer pricing, thinner cushion — so falling ERP raises Altitude. Rising ERP is a fatter cushion.',
-    source: 'damodaran', seriesId: 'erp', fetchIntervalDays: 20,
+    source: 'damodaran', seriesId: 'erp', fetchIntervalDays: 20, heavyParse: true,
     subIndex: 'valuation', subSign: -1, subWeight: 2,
   },
   {
@@ -512,7 +517,7 @@ export const KPIS: KpiDef[] = [
     unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
     stressSign: -1,
     signRationale: 'Damodaran’s more conservative variant, on normalized earnings and payout. Diverges meaningfully from the headline — when it does, the gap is the story.',
-    source: 'damodaran', seriesId: 'erp_norm', fetchIntervalDays: 20,
+    source: 'damodaran', seriesId: 'erp_norm', fetchIntervalDays: 20, heavyParse: true,
     subIndex: 'valuation', subSign: -1,
   },
   {
@@ -520,7 +525,7 @@ export const KPIS: KpiDef[] = [
     unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
     stressSign: 1,
     signRationale: 'The treasury rate underlying that month’s ERP solve — published alongside it so the number stays traceable to its assumptions.',
-    source: 'damodaran', seriesId: 'erp_rf', fetchIntervalDays: 20,
+    source: 'damodaran', seriesId: 'erp_rf', fetchIntervalDays: 20, heavyParse: true,
   },
   {
     id: 'erp_expret', label: 'EXPECTED EQUITY RETURN', cluster: 'valuation',
@@ -677,20 +682,20 @@ export const KPIS: KpiDef[] = [
     source: 'fred', seriesId: 'GDP' },
   { id: 'erp_spx', label: 'ERP S&P LEVEL', cluster: 'valuation', unit: '', decimals: 0,
     refresh: 'daily', freq: 'monthly', hidden: true,
-    source: 'damodaran', seriesId: 'erp_spx', fetchIntervalDays: 20 },
+    source: 'damodaran', seriesId: 'erp_spx', fetchIntervalDays: 20, heavyParse: true },
   { id: 'erp_cf', label: 'ERP TRAILING CF', cluster: 'valuation', unit: '', decimals: 2,
     refresh: 'daily', freq: 'monthly', hidden: true,
-    source: 'damodaran', seriesId: 'erp_cf', fetchIntervalDays: 20 },
+    source: 'damodaran', seriesId: 'erp_cf', fetchIntervalDays: 20, heavyParse: true },
   // Deep annual history (1961-). This is Implied ERP (FCFE) — a DIFFERENT
   // measure from the monthly sustainable-payout headline, so it is kept as
   // its own series and never spliced into it. Used for the reference marks
   // at the 1999 low and the 2008/2011 highs.
   { id: 'erp_annual', label: 'IMPLIED ERP (ANNUAL, FCFE)', cluster: 'valuation', unit: '%', decimals: 2,
     refresh: 'daily', freq: 'monthly', staleAfterDays: 500, hidden: true,
-    source: 'damodaran', seriesId: 'erp_annual', fetchIntervalDays: 20 },
+    source: 'damodaran', seriesId: 'erp_annual', fetchIntervalDays: 20, heavyParse: true },
   { id: 'spx_annual_ret', label: 'S&P ANNUAL TOTAL RETURN', cluster: 'valuation', unit: '%', decimals: 2,
     refresh: 'daily', freq: 'monthly', staleAfterDays: 500, hidden: true,
-    source: 'damodaran', seriesId: 'spx_annual_ret', fetchIntervalDays: 20 },
+    source: 'damodaran', seriesId: 'spx_annual_ret', fetchIntervalDays: 20, heavyParse: true },
 ];
 
 export const kpiById = new Map(KPIS.map((k) => [k.id, k]));

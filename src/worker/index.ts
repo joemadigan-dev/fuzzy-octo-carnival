@@ -49,7 +49,7 @@ export default {
   },
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runScheduled(env).then(
+    ctx.waitUntil(runScheduled(env, Date.now(), { allowHeavy: true }).then(
       (log) => console.log('scheduled run:\n' + log),
       (err) => console.error('scheduled run failed:', err),
     ));
@@ -289,8 +289,11 @@ async function journalList(env: Env): Promise<Response> {
 async function adminRefresh(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401);
   try {
-    const log = await runScheduled(env);
-    return json({ ok: true, log: log.split('\n') });
+    // Heavy spreadsheet parses are cron-only by default: a fetch handler
+    // does not have the CPU budget and would fail with 1102 mid-run.
+    const allowHeavy = new URL(req.url).searchParams.get('heavy') === '1';
+    const log = await runScheduled(env, Date.now(), { allowHeavy });
+    return json({ ok: true, allowHeavy, log: log.split('\n') });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }
