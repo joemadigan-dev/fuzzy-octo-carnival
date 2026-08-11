@@ -12,6 +12,7 @@ import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
 import { computeBarometer } from '../compute/barometer.ts';
 import { computeDisconfirmation } from '../compute/disconfirmation.ts';
+import { computeBaseRates } from '../compute/baserates.ts';
 import { runAlerts, reviewJournal } from './accountability.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
@@ -204,6 +205,14 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       log.push(`disconfirmation: FAILED — ${e}`);
     }
 
+    let baseRates = null;
+    try {
+      baseRates = computeBaseRates(seriesMap);
+      log.push(`baserates: ERP ${baseRates.currentErp}% at ${baseRates.currentPct}th pct, ${baseRates.outcomes.length} comparable years`);
+    } catch (e) {
+      log.push(`baserates: FAILED — ${e}`);
+    }
+
     stmts.push(env.DB.prepare(
       `INSERT INTO signal_state (id, computed_at, detail) VALUES (1,?,?)
        ON CONFLICT(id) DO UPDATE SET computed_at=excluded.computed_at, detail=excluded.detail`,
@@ -212,6 +221,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       divergence: result.divergenceNow,
       analogues: result.analogues,
       disconfirmation: disc,
+      baseRates,
       diagnostics: result.diagnostics,
     })));
 

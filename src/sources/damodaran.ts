@@ -93,6 +93,9 @@ const SERIES: Record<string, { url: string; sheet: string; col: number; annual?:
   // NOTE this is Implied ERP (FCFE) — a DIFFERENT measure from the monthly
   // sustainable-payout series. Kept as its own series; never spliced.
   erp_annual: { url: ANNUAL_URL, sheet: 'Historical Impl Premiums', col: 15, annual: true },
+  // annual S&P 500 total return (dividends included), 1928- — the base
+  // rates the long-horizon dispersion tile is computed from
+  spx_annual_ret: { url: HISTRET_URL, sheet: 'Returns by year', col: 1, annual: true },
 };
 
 /** Parsed workbooks are cached for the life of the isolate so one cron run

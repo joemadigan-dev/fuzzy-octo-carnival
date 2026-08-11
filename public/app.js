@@ -263,9 +263,80 @@
         cursor: { y: false },
       }, [ts, vs], host);
       charts.set(id, plot);
+      if (id === 'erp') await mountErpDecomposition(host);
     } catch (e) {
       host.textContent = `chart unavailable — ${e.message}`;
     }
+  }
+
+  // Stacked contribution bar: WHY the ERP moved each month. A fall driven
+  // by the index rallying is froth; one driven by the risk-free rate
+  // rising is a repricing. The composite must not treat them alike, and
+  // nothing else on this wall can tell them apart.
+  async function mountErpDecomposition(host) {
+    const legs = ['erp_d_index', 'erp_d_cf', 'erp_d_rf'];
+    const LABEL = { erp_d_index: 'INDEX', erp_d_cf: 'CASHFLOW', erp_d_rf: 'RATES' };
+    let series;
+    try {
+      series = await Promise.all(legs.map(async (id) => {
+        const r = await fetch(`/api/series/${id}`);
+        if (!r.ok) throw new Error(id);
+        return (await r.json()).data;
+      }));
+    } catch { return; }
+
+    const N = 24; // last two years of monthly attributions
+    const [ts] = series[0];
+    const idx = ts.slice(-N);
+    const legVals = series.map(([, v]) => v.slice(-N));
+    if (idx.length < 3) return;
+
+    let mag = 0;
+    for (const v of legVals) for (const x of v) mag = Math.max(mag, Math.abs(x ?? 0));
+    mag = Math.max(mag, 0.05);
+
+    const W = 900, H = 120, L = 8, R = 892, MID = 60;
+    const bw = Math.max(3, ((R - L) / idx.length) * 0.62);
+    const bx = (i) => L + ((i + 0.5) / idx.length) * (R - L);
+    const hOf = (v) => (Math.abs(v) / mag) * 56;
+    // three legs, distinguished by fill weight — greyscale only, because
+    // green/red are reserved for signal direction everywhere on this page
+    const FILL = ['rgba(23,25,28,0.82)', 'rgba(23,25,28,0.45)', 'url(#erpHatch)'];
+    let bars = '';
+    for (let i = 0; i < idx.length; i++) {
+      let up = MID, dn = MID;
+      for (let s = 0; s < 3; s++) {
+        const v = legVals[s][i];
+        if (v === null || v === undefined || !v) continue;
+        const h = hOf(v);
+        const y = v > 0 ? (up -= h) : dn;
+        if (v < 0) dn += h;
+        bars += `<rect x="${(bx(i) - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}"
+          fill="${FILL[s]}" stroke="var(--panel)" stroke-width="0.4"><title>${new Date(idx[i] * 1000).toISOString().slice(0, 7)} ${LABEL[legs[s]]}: ${v > 0 ? '+' : ''}${v.toFixed(3)}pp</title></rect>`;
+      }
+    }
+    const firstLbl = new Date(idx[0] * 1000).toISOString().slice(0, 7);
+    const lastLbl = new Date(idx[idx.length - 1] * 1000).toISOString().slice(0, 7);
+    const box = document.createElement('div');
+    box.className = 'erp-decomp';
+    // All text lives in HTML, not the SVG: the viewBox is scaled to the
+    // container width, which would blow up any font-size set inside it.
+    box.innerHTML = `
+      <div class="erp-decomp-head">WHY THE ERP MOVED — MONTHLY CONTRIBUTION, PERCENTAGE POINTS
+        <span class="erp-key"><i class="k0"></i>INDEX <i class="k1"></i>CASHFLOW <i class="k2"></i>RATES</span></div>
+      <div class="erp-scale top">+${mag.toFixed(2)}pp · ERP widening (fatter cushion)</div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="erp-decomp-svg" role="img"
+        aria-label="Monthly ERP contribution by index, cash flow and rates">
+        <defs><pattern id="erpHatch" width="4" height="4" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <line x1="0" y1="0" x2="0" y2="4" stroke="#17191c" stroke-width="1.6"/></pattern></defs>
+        <line x1="${L}" y1="${MID}" x2="${R}" y2="${MID}" stroke="var(--rule)" stroke-width="1"/>
+        ${bars}
+      </svg>
+      <div class="erp-scale bottom">−${mag.toFixed(2)}pp · ERP compressing (thinner cushion)</div>
+      <div class="erp-dates"><span>${firstLbl}</span><span>${lastLbl}</span></div>
+      <div class="erp-decomp-note">First-order attribution of a cash-yield proxy (CF/Index + g − rf); the legs sum to
+        the change in that proxy, not to Damodaran's solved ERP. The mix is the point, not the total.</div>`;
+    host.appendChild(box);
   }
 
   // ── polling + diff + tick animation ──────────────────────────────────
@@ -588,6 +659,7 @@
     renderBacktest();
     renderChangeLog();
     renderAnalogues();
+    renderBaseRates();
     renderAlerts();
     renderDiagnostics();
   }
@@ -615,6 +687,50 @@
         </tr>`).join('')}
       <tr class="spread-row"><td colspan="2">SPREAD ACROSS EPISODES</td>
         <td colspan="1">${spreads[0]}</td><td>${spreads[1]}</td><td>${spreads[2]}</td><td>${spreads[3]}</td></tr>`;
+  }
+
+  // Dispersion strips: every comparable historical outcome as a tick on a
+  // shared scale, with the current band's range called out. Never a mean.
+  function renderBaseRates() {
+    const b = baro?.baseRates;
+    const host = $('br-strips');
+    if (!b || !b.outcomes?.length) { host.innerHTML = '<p class="sig-note">not computed yet</p>'; return; }
+    $('br-note').innerHTML = `Today's implied ERP <b>${b.currentErp}%</b> sits at the <b>${ordinal(b.currentPct)} percentile</b>
+      of its annual history. ${escapeHtml(b.note)} Comparable band <b>${b.band.loErp}–${b.band.hiErp}%</b>,
+      <b>${b.outcomes.length}</b> years: ${b.outcomes.map((o) => o.year).join(' · ')}.`;
+
+    const KEYS = [['r1', '1 YEAR'], ['r3', '3 YEAR'], ['r5', '5 YEAR'], ['r10', '10 YEAR']];
+    // one shared scale across all horizons so the narrowing is visible
+    let lo = Infinity, hi = -Infinity;
+    for (const [k] of KEYS) for (const o of b.outcomes) {
+      const v = o[k]; if (v === null || v === undefined) continue;
+      if (v < lo) lo = v; if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo)) { host.innerHTML = '<p class="sig-note">no elapsed horizons yet</p>'; return; }
+    lo = Math.min(lo, -10); hi = Math.max(hi, 10);
+    const W = 900, L = 78, R = 828;
+    const x = (v) => L + ((v - lo) / (hi - lo)) * (R - L);
+
+    host.innerHTML = KEYS.map(([k, label]) => {
+      const s = b.spread[k];
+      const vals = b.outcomes.map((o) => ({ v: o[k], y: o.year })).filter((o) => o.v !== null && o.v !== undefined);
+      if (!vals.length) return `<div class="br-row"><span class="br-label">${label}</span><span class="sig-note">horizon not yet elapsed</span></div>`;
+      const ticks = vals.map((o) =>
+        `<line x1="${x(o.v).toFixed(1)}" y1="6" x2="${x(o.v).toFixed(1)}" y2="26" stroke="${o.v < 0 ? 'var(--down)' : 'var(--up)'}" stroke-width="1.6" opacity="0.85"><title>${o.y}: ${o.v > 0 ? '+' : ''}${o.v}% annualised</title></line>`).join('');
+      const zeroX = x(0);
+      return `<div class="br-row">
+        <span class="br-label">${label}</span>
+        <svg viewBox="0 0 ${W} 34" class="br-svg" role="img" aria-label="${label} outcomes from ${s.lo}% to ${s.hi}%, median ${s.med}%">
+          <line x1="${L}" y1="16" x2="${R}" y2="16" stroke="var(--rule)" stroke-width="1"/>
+          <line x1="${zeroX.toFixed(1)}" y1="3" x2="${zeroX.toFixed(1)}" y2="29" stroke="var(--ink)" stroke-width="1" stroke-dasharray="2 2"/>
+          ${ticks}
+          <line x1="${x(s.med).toFixed(1)}" y1="2" x2="${x(s.med).toFixed(1)}" y2="30" stroke="var(--ink)" stroke-width="2.4"/>
+          <text x="${L - 6}" y="20" text-anchor="end" font-size="9" fill="var(--muted)" font-family="'Spline Sans Mono',monospace">${s.lo}%</text>
+          <text x="${R + 6}" y="20" text-anchor="start" font-size="9" fill="var(--muted)" font-family="'Spline Sans Mono',monospace">${s.hi}%</text>
+        </svg>
+        <span class="br-med">med ${s.med > 0 ? '+' : ''}${s.med}%<span class="br-n"> n=${s.n}</span></span>
+      </div>`;
+    }).join('') + `<div class="br-axis">← worse · 0% · better → · heavy line = median · each tick is one historical year (hover for which)</div>`;
   }
 
   async function renderAlerts() {

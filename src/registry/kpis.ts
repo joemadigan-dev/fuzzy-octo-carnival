@@ -688,6 +688,9 @@ export const KPIS: KpiDef[] = [
   { id: 'erp_annual', label: 'IMPLIED ERP (ANNUAL, FCFE)', cluster: 'valuation', unit: '%', decimals: 2,
     refresh: 'daily', freq: 'monthly', staleAfterDays: 500, hidden: true,
     source: 'damodaran', seriesId: 'erp_annual', fetchIntervalDays: 20 },
+  { id: 'spx_annual_ret', label: 'S&P ANNUAL TOTAL RETURN', cluster: 'valuation', unit: '%', decimals: 2,
+    refresh: 'daily', freq: 'monthly', staleAfterDays: 500, hidden: true,
+    source: 'damodaran', seriesId: 'spx_annual_ret', fetchIntervalDays: 20 },
 ];
 
 export const kpiById = new Map(KPIS.map((k) => [k.id, k]));

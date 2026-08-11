@@ -154,6 +154,7 @@ async function apiBarometer(env: Env): Promise<Response> {
     divergence: detail.divergence,
     analogues: detail.analogues ?? [],
     disconfirmation: detail.disconfirmation ?? null,
+    baseRates: detail.baseRates ?? null,
     diagnostics: detail.diagnostics,
     history: chart ? JSON.parse(chart.points) : null,
     changes: (changes.results ?? []).map((c) => ({ ...c, drivers: JSON.parse(c.drivers as string) })),

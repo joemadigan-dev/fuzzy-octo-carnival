@@ -633,6 +633,32 @@ table.sig-inputs { border-collapse: collapse; width: 100%; font-family: var(--fo
 /* uPlot: strip chrome to greyscale */
 .u-legend { font-family: var(--font-num) !important; font-size: 10px !important; color: var(--muted) !important; }
 
+/* ── base rates + ERP decomposition ──────────────────────────────────── */
+
+.sig-baserates { margin-top: 12px; }
+.br-row { display: flex; align-items: center; gap: 10px; margin: 1px 0; }
+.br-label { font-family: var(--font-num); font-size: 10.5px; font-weight: 700; width: 62px; color: var(--muted); }
+.br-svg { flex: 1; height: 34px; min-width: 0; }
+.br-med { font-family: var(--font-num); font-size: 11.5px; font-weight: 700; white-space: nowrap; width: 108px; }
+.br-n { color: var(--muted); font-weight: 500; font-size: 9.5px; }
+.br-axis { font-family: var(--font-num); font-size: 9.5px; color: var(--muted); margin: 2px 0 0 72px; }
+
+.erp-decomp { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 6px; }
+.erp-decomp-head {
+  font-family: var(--font-num); font-size: 10px; letter-spacing: 0.1em;
+  color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+}
+.erp-key { display: flex; align-items: center; gap: 5px; }
+.erp-key i { display: inline-block; width: 9px; height: 9px; margin-left: 8px; }
+.erp-key .k0 { background: rgba(23, 25, 28, 0.82); }
+.erp-key .k1 { background: rgba(23, 25, 28, 0.45); }
+.erp-key .k2 { background: repeating-linear-gradient(45deg, #17191c 0 1.6px, transparent 1.6px 4px); }
+.erp-decomp-svg { width: 100%; height: 118px; display: block; }
+.erp-scale { font-family: var(--font-num); font-size: 9.5px; color: var(--muted); }
+.erp-scale.top { margin-top: 3px; }
+.erp-dates { display: flex; justify-content: space-between; font-family: var(--font-num); font-size: 9.5px; color: var(--muted); margin-bottom: 3px; }
+.erp-decomp-note { font-size: 10.5px; color: var(--muted); line-height: 1.35; }
+
 /* ── decision journal ────────────────────────────────────────────────── */
 
 .jr-sub {
