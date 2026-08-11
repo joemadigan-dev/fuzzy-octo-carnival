@@ -19,7 +19,7 @@
 // value raises that sub-index's named quantity (stress for Pressure subs,
 // altitude for Altitude subs).
 
-export type SourceId = 'fred' | 'stooq' | 'yahoo' | 'cnn' | 'naaim';
+export type SourceId = 'fred' | 'stooq' | 'yahoo' | 'cnn' | 'naaim' | 'damodaran';
 export type Freq = 'daily' | 'weekly' | 'monthly' | 'quarterly';
 
 export type Derivation =
@@ -39,7 +39,16 @@ export type Derivation =
   /** z(credit) − z(rocDays-change in balance): Hunter's response gap. */
   | { type: 'response_gap'; credit: string; balance: string; rocDays: number }
   /** mean percentile-rank of the inputs' 12-week rate of change. */
-  | { type: 'capitulation'; inputs: string[]; rocDays: number };
+  | { type: 'capitulation'; inputs: string[]; rocDays: number }
+  /** First-order attribution of the change in a cash-yield ERP proxy to
+   *  one of its three drivers. ERP_proxy = CF/Index + g − rf, so:
+   *   index      = CF(t-1)/Index(t) − CF(t-1)/Index(t-1)
+   *   cashflow   = CF(t)/Index(t)   − CF(t-1)/Index(t)
+   *   riskfree   = −(rf(t) − rf(t-1))
+   *  A falling ERP because the index rallied is froth; a falling ERP
+   *  because the risk-free rate rose is a repricing. Not the same thing. */
+  | { type: 'erp_attrib'; index: string; cashflow: string; riskfree: string;
+      leg: 'index' | 'cashflow' | 'riskfree' };
 
 export interface KpiDef {
   id: string;
@@ -66,6 +75,9 @@ export interface KpiDef {
   hidden?: boolean;
   source?: SourceId;
   seriesId?: string;
+  /** Minimum days between fetches for this series. Set for slow-moving
+   *  sources on someone else's personal server — be a good citizen. */
+  fetchIntervalDays?: number;
   /** Multiplier applied to fetched values before storage — normalises
    *  provider units (e.g. WALCL publishes $mn; store $tn with 1e-6). */
   fetchScale?: number;
@@ -98,8 +110,28 @@ export const CLUSTERS: ClusterDef[] = [
   { id: 'funding', label: 'FUNDING & LIQUIDITY' },
   { id: 'sentiment', label: 'SENTIMENT & POSITIONING' },
   { id: 'trend', label: 'TREND, BREADTH & ROTATION' },
+  { id: 'valuation', label: 'VALUATION — IMPLIED EQUITY RISK PREMIUM',
+    attribution: 'DATA: ASWATH DAMODARAN, NYU STERN · MONTHLY' },
   { id: 'thesis', label: 'THESIS TRACKERS — HUNTER TARGETS',
     attribution: 'TRACKING DAVID HUNTER FORECASTS · NOT MARKET DATA' },
+];
+
+/** Dated forecasts with stated horizons, for the thesis-decay tile.
+ *  Elapsed time against a stated horizon is a fact, not a criticism — and
+ *  it is exactly the fact a confirmation machine would never surface. */
+export interface ThesisForecast {
+  label: string;
+  statedOn: string;     // when the call was made
+  horizonMonths: number;
+  claim: string;
+}
+export const THESIS_FORECASTS: ThesisForecast[] = [
+  { label: 'MELT-UP TO S&P 10,000', statedOn: '2026-02-07', horizonMonths: 12,
+    claim: 'Parabolic melt-up completing before the global bust.' },
+  { label: 'GLOBAL BUST BEGINS', statedOn: '2026-02-07', horizonMonths: 12,
+    claim: 'Bust follows the melt-up peak.' },
+  { label: '10Y TO 3.00%', statedOn: '2026-08-07', horizonMonths: 6,
+    claim: 'Long yields fall to 3% as growth rolls over.' },
 ];
 
 /** Deep backfill: credit/sentiment need to have seen 2008 and 2020 for the
@@ -460,6 +492,65 @@ export const KPIS: KpiDef[] = [
     subIndex: 'leverage_valuation', subSign: 1,
   },
 
+  // ═══ VALUATION — implied ERP (Aswath Damodaran, NYU Stern) ═══════════
+  // The corrective input. Every other voice on this wall is bearish and
+  // their indicators were chosen because they support that thesis. This
+  // one is forward-looking, cash-flow-based and immune to sentiment — the
+  // input most likely to DISAGREE with the rest of the board, which is
+  // precisely its value. Monthly cadence; the observation date is
+  // prominent on the tile and it must never read as though it ticked today.
+  {
+    id: 'erp', label: 'IMPLIED ERP', cluster: 'valuation',
+    unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'Reads backwards to most people: a FALLING ERP means investors demand less compensation for equity risk — richer pricing, thinner cushion — so falling ERP raises Altitude. Rising ERP is a fatter cushion.',
+    source: 'damodaran', seriesId: 'erp', fetchIntervalDays: 20,
+    subIndex: 'valuation', subSign: -1, subWeight: 2,
+  },
+  {
+    id: 'erp_norm', label: 'IMPLIED ERP (NORM)', cluster: 'valuation',
+    unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'Damodaran’s more conservative variant, on normalized earnings and payout. Diverges meaningfully from the headline — when it does, the gap is the story.',
+    source: 'damodaran', seriesId: 'erp_norm', fetchIntervalDays: 20,
+    subIndex: 'valuation', subSign: -1,
+  },
+  {
+    id: 'erp_rf', label: 'RISK-FREE USED', cluster: 'valuation',
+    unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
+    stressSign: 1,
+    signRationale: 'The treasury rate underlying that month’s ERP solve — published alongside it so the number stays traceable to its assumptions.',
+    source: 'damodaran', seriesId: 'erp_rf', fetchIntervalDays: 20,
+  },
+  {
+    id: 'erp_expret', label: 'EXPECTED EQUITY RETURN', cluster: 'valuation',
+    unit: '%', decimals: 2, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'ERP + risk-free: the total nominal return the market is priced to deliver. The single most useful number for a long-horizon allocator, and low is bad.',
+    derive: { type: 'combo', terms: [{ id: 'erp', coef: 1 }, { id: 'erp_rf', coef: 1 }], ffillDays: 40 },
+  },
+  {
+    id: 'erp_d_index', label: 'ΔERP FROM INDEX', cluster: 'valuation',
+    unit: 'pp', decimals: 3, showPct: false, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'The part of the ERP change explained by the index moving. Negative means the market rallied into a thinner cushion — late-cycle froth rather than a repricing.',
+    derive: { type: 'erp_attrib', index: 'erp_spx', cashflow: 'erp_cf', riskfree: 'erp_rf', leg: 'index' },
+  },
+  {
+    id: 'erp_d_cf', label: 'ΔERP FROM CASHFLOW', cluster: 'valuation',
+    unit: 'pp', decimals: 3, showPct: false, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'The part explained by expected cash flows changing. Falling cash flows thin the cushion for a fundamentally different reason than a price rally does.',
+    derive: { type: 'erp_attrib', index: 'erp_spx', cashflow: 'erp_cf', riskfree: 'erp_rf', leg: 'cashflow' },
+  },
+  {
+    id: 'erp_d_rf', label: 'ΔERP FROM RATES', cluster: 'valuation',
+    unit: 'pp', decimals: 3, showPct: false, refresh: 'daily', freq: 'monthly',
+    stressSign: -1,
+    signRationale: 'The part explained by the risk-free rate moving. An ERP falling because rates rose while equities held is arguably a repricing, not a bubble — the composite must not treat the two identically.',
+    derive: { type: 'erp_attrib', index: 'erp_spx', cashflow: 'erp_cf', riskfree: 'erp_rf', leg: 'riskfree' },
+  },
+
   // ═══ THESIS TRACKERS — Hunter forecast tracking, not market data ══════
   // Distance-to-target tiles move OPPOSITE their underlying (target fixed),
   // so each carries the inverted sign of its underlying instrument.
@@ -584,6 +675,19 @@ export const KPIS: KpiDef[] = [
   { id: 'gdp', label: 'GDP', cluster: 'trend', unit: '', decimals: 0,
     refresh: 'daily', freq: 'quarterly', hidden: true,
     source: 'fred', seriesId: 'GDP' },
+  { id: 'erp_spx', label: 'ERP S&P LEVEL', cluster: 'valuation', unit: '', decimals: 0,
+    refresh: 'daily', freq: 'monthly', hidden: true,
+    source: 'damodaran', seriesId: 'erp_spx', fetchIntervalDays: 20 },
+  { id: 'erp_cf', label: 'ERP TRAILING CF', cluster: 'valuation', unit: '', decimals: 2,
+    refresh: 'daily', freq: 'monthly', hidden: true,
+    source: 'damodaran', seriesId: 'erp_cf', fetchIntervalDays: 20 },
+  // Deep annual history (1961-). This is Implied ERP (FCFE) — a DIFFERENT
+  // measure from the monthly sustainable-payout headline, so it is kept as
+  // its own series and never spliced into it. Used for the reference marks
+  // at the 1999 low and the 2008/2011 highs.
+  { id: 'erp_annual', label: 'IMPLIED ERP (ANNUAL, FCFE)', cluster: 'valuation', unit: '%', decimals: 2,
+    refresh: 'daily', freq: 'monthly', staleAfterDays: 500, hidden: true,
+    source: 'damodaran', seriesId: 'erp_annual', fetchIntervalDays: 20 },
 ];
 
 export const kpiById = new Map(KPIS.map((k) => [k.id, k]));

@@ -10,10 +10,44 @@ permanently on the Cloudflare free tier.
 (`the-wall`) predates the rename and still owns the URL; changing it
 publishes a new worker at a new address, so it is left alone deliberately.
 
-**Clusters (53 tiles):** The Four Bodies (oil/gold/dollar/rates) · Credit
+**Clusters:** The Four Bodies (oil/gold/dollar/rates) · Credit
 stress · Funding & liquidity · Sentiment & positioning · Trend, breadth &
-rotation · Thesis trackers (dated Hunter forecasts, visually attributed as
-forecasts, never confusable with market data).
+rotation · **Valuation (Damodaran implied ERP)** · Thesis trackers (dated
+Hunter forecasts, visually attributed as forecasts, never confusable with
+market data).
+
+## Disconfirmation
+
+Every other voice instrumented here — Hunter, Slok, Burry — is bearish, and
+their indicators were chosen because they support that thesis. That is a
+confirmation machine, and one wearing a percentile scale and a backtest is
+more dangerous than one without, because it looks rigorous. Two corrections
+run against it:
+
+1. **The Valuation cluster** (`src/sources/damodaran.ts`) carries Aswath
+   Damodaran's implied equity risk premium — forward-looking, cash-flow
+   based, immune to sentiment, and therefore the input most likely to
+   *disagree* with the rest of the board. It enters Altitude at 25%, second
+   only to sentiment. Falling ERP means a thinner risk cushion, so it feeds
+   *higher* Altitude — this reads backwards to most people and the rationale
+   is written into the registry. The ERP decomposition splits each monthly
+   change into index, cash-flow and risk-free contributions, because an ERP
+   falling on a rally is froth and one falling because rates rose is a
+   repricing, and no other indicator here can tell them apart.
+2. **The DISCONFIRMATION panel** is permanently visible above the barometer
+   and lists the conditions that would weaken the bear case, each with a
+   live state and a headline count. It gets the same screen space and the
+   same daily logging as the stress readings. Alongside it, **thesis decay**
+   shows elapsed time against each dated forecast's stated horizon — a fact,
+   not a criticism, and one a confirmation machine would never surface about
+   itself.
+
+Damodaran's site is one professor's personal academic server, not an API.
+Series carrying `fetchIntervalDays` are fetched at most every 20 days and
+the parsed workbook is cached per run; he is credited by name on the cluster
+header. Both workbooks are Macintosh Excel files with `date1904: true`, and
+SheetJS does not apply that offset even with `cellDates` — every date would
+land four years early. The source corrects it explicitly.
 
 ## Architecture in one paragraph
 

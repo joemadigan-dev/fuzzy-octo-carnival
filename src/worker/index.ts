@@ -111,12 +111,21 @@ async function apiWall(env: Env): Promise<Response> {
     };
   }
 
+  // disconfirmation rides on /api/wall because its panel is permanently
+  // visible — it must not need a second request to appear
+  let disconfirmation = null;
+  if (signalRow) {
+    const d = JSON.parse(signalRow.detail).disconfirmation;
+    if (d) disconfirmation = { passing: d.passing, total: d.total, tests: d.tests, decay: d.decay };
+  }
+
   return json({
     generatedAt: new Date().toISOString(),
     lastRun: lastRun?.value ?? null,
     clusters: CLUSTERS,
     kpis,
     barometer,
+    disconfirmation,
   }, 200, 60);
 }
 
@@ -144,6 +153,7 @@ async function apiBarometer(env: Env): Promise<Response> {
     barometer: detail.barometer,
     divergence: detail.divergence,
     analogues: detail.analogues ?? [],
+    disconfirmation: detail.disconfirmation ?? null,
     diagnostics: detail.diagnostics,
     history: chart ? JSON.parse(chart.points) : null,
     changes: (changes.results ?? []).map((c) => ({ ...c, drivers: JSON.parse(c.drivers as string) })),

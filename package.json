@@ -17,5 +17,8 @@
     "typescript": "^5.5.4",
     "uplot": "^1.6.32",
     "wrangler": "^4.119.0"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }

@@ -11,6 +11,7 @@ import { SOURCES, type Point } from '../sources/index.ts';
 import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
 import { computeBarometer } from '../compute/barometer.ts';
+import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { runAlerts, reviewJournal } from './accountability.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
@@ -51,8 +52,23 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       const maxRow = await env.DB
         .prepare('SELECT MAX(date) AS d, COUNT(*) AS n FROM observations WHERE series_id = ?')
         .bind(kpi.id).first<{ d: string | null; n: number }>();
-      const minRows = kpi.freq === 'quarterly' ? 10 : kpi.freq === 'weekly' ? 30 : 100;
+      const minRows = kpi.freq === 'quarterly' ? 10 : kpi.freq === 'weekly' ? 30
+        : kpi.freq === 'monthly' ? 24 : 100;
       const needBackfill = !maxRow?.d || (maxRow.n ?? 0) < minRows;
+
+      // Good-citizen throttle: slow-moving series on someone else's
+      // personal academic server are fetched at most every N days. The
+      // cron runs hourly; without this we would poll a professor's site
+      // 720 times a month for data that changes once.
+      if (!needBackfill && kpi.fetchIntervalDays) {
+        const key = `fetched:${kpi.id}`;
+        const last = await env.DB.prepare('SELECT value FROM meta WHERE key = ?').bind(key).first<{ value: string }>();
+        if (last?.value && last.value > isoDaysAgo(today, kpi.fetchIntervalDays)) {
+          outcomes.set(kpi.id, { points: [], ok: true });
+          log.push(`${kpi.id}: skipped (fetched ${last.value}, interval ${kpi.fetchIntervalDays}d)`);
+          return;
+        }
+      }
       const from = needBackfill ? BACKFILL_START : isoDaysAgo(maxRow!.d!, REFETCH_DAYS);
       const source = SOURCES[kpi.source!];
       let pts: Point[];
@@ -66,6 +82,11 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       }
       if (kpi.fetchScale) pts = pts.map((p) => ({ date: p.date, value: p.value * kpi.fetchScale! }));
       await upsertObservations(env.DB, kpi.id, pts);
+      if (kpi.fetchIntervalDays) {
+        await env.DB.prepare(
+          "INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        ).bind(`fetched:${kpi.id}`, today).run();
+      }
       outcomes.set(kpi.id, { points: [], ok: true });
       log.push(`${kpi.id}: fetched ${pts.length} obs from ${from} via ${via}`);
     } catch (e) {
@@ -173,6 +194,16 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
     const result = computeBarometer(seriesMap);
     const stmts: D1PreparedStatement[] = [];
 
+    // Disconfirmation gets the same treatment as the stress readings:
+    // computed every run, stored, logged, charted.
+    let disc = null;
+    try {
+      disc = computeDisconfirmation(seriesMap, today);
+      log.push(`disconfirmation: ${disc.passing}/${disc.total} tests passing`);
+    } catch (e) {
+      log.push(`disconfirmation: FAILED — ${e}`);
+    }
+
     stmts.push(env.DB.prepare(
       `INSERT INTO signal_state (id, computed_at, detail) VALUES (1,?,?)
        ON CONFLICT(id) DO UPDATE SET computed_at=excluded.computed_at, detail=excluded.detail`,
@@ -180,6 +211,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now()): Promis
       barometer: result.detail,
       divergence: result.divergenceNow,
       analogues: result.analogues,
+      disconfirmation: disc,
       diagnostics: result.diagnostics,
     })));
 
@@ -289,6 +321,7 @@ function inputsOf(kpi: KpiDef): string[] {
     case 'roc': case 'ma_extension': case 'target_distance': case 'completion': return [d.input];
     case 'response_gap': return [d.credit, d.balance];
     case 'capitulation': return d.inputs;
+    case 'erp_attrib': return [d.index, d.cashflow, d.riskfree];
   }
 }
 

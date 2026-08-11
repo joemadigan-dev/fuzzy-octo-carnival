@@ -51,11 +51,21 @@ export const LAYERS: LayerDef[] = [
     id: 'altitude',
     label: 'ALTITUDE',
     polarity: 1,
+    // Valuation enters at 25%, second only to sentiment: it is the only
+    // Altitude input with a documented relationship to long-horizon forward
+    // returns. Sentiment tells you what people feel; the implied ERP tells
+    // you what they are being paid.
     subs: [
-      { id: 'sentiment_positioning', label: 'SENTIMENT & POSITIONING', weight: 0.40 },
-      { id: 'trend_extension', label: 'TREND EXTENSION', weight: 0.25 },
-      { id: 'leverage_valuation', label: 'LEVERAGE & VALUATION', weight: 0.20 },
-      { id: 'breadth_rotation', label: 'BREADTH & ROTATION', weight: 0.15 },
+      { id: 'sentiment_positioning', label: 'SENTIMENT & POSITIONING', weight: 0.30 },
+      { id: 'valuation', label: 'VALUATION (IMPLIED ERP)', weight: 0.25 },
+      { id: 'trend_extension', label: 'TREND EXTENSION', weight: 0.20 },
+      // Named for what it actually holds. The brief called this slot
+      // "Leverage", but its only member is market-cap/GDP — a valuation
+      // measure, not a leverage one. Labelling it LEVERAGE would be a
+      // false label on an empty box; it needs a real leverage series
+      // (margin debt, corporate debt/GDP) before it earns that name.
+      { id: 'leverage_valuation', label: 'MKT CAP / GDP (LEVERAGE SLOT)', weight: 0.15 },
+      { id: 'breadth_rotation', label: 'BREADTH & ROTATION', weight: 0.10 },
     ],
   },
 ];
@@ -123,5 +133,13 @@ export const GAUGE_REF_DATES = [
 export const CORR_FLAG = 0.7;
 
 /** Minimum share of a sub-index's (or layer's) weight that must be present
- *  before a value is published. */
-export const MIN_COVERAGE = 0.5;
+ *  before a value is published.
+ *
+ *  0.4, not 0.5, deliberately. Adding Valuation at 25% pushed pre-2016
+ *  Altitude coverage from 60% to 45%, and a 0.5 floor silently deleted
+ *  fifteen years of backtest — which contradicts this instrument's own
+ *  rule that thin data is FLAGGED, not dropped. Partial readings are
+ *  marked `*` on the gauge and carried; genuinely too-thin periods (early
+ *  Altitude before trend extension exists, dot-com Pressure at 20%) still
+ *  fall below the floor and publish nothing. */
+export const MIN_COVERAGE = 0.4;

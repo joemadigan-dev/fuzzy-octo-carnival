@@ -172,6 +172,40 @@
     if (expandedTile) mountChart(expandedTile);
     renderBezel();
     renderBaroHead();
+    renderDisconfirmation();
+  }
+
+  // ── disconfirmation: permanently visible, equal footing with the
+  //    stress readings. A wall built to detect what its owner already
+  //    believes will detect it; this is the counterweight. ─────────────
+  function renderDisconfirmation() {
+    const d = wall?.disconfirmation;
+    const count = $('disconf-count');
+    if (!d) { count.textContent = 'not computed yet'; return; }
+    const share = d.total ? d.passing / d.total : 0;
+    count.innerHTML = `<b>${d.passing}</b> of <b>${d.total}</b> disconfirming tests currently passing`;
+    count.dataset.tone = share >= 0.6 ? 'good' : share <= 0.3 ? 'bad' : '';
+
+    $('disconf-tests').innerHTML = (d.tests ?? []).map((t) => `
+      <div class="dt" data-pass="${t.pass === null ? 'unknown' : t.pass}">
+        <span class="dt-mark">${t.pass === null ? '?' : t.pass ? '✓' : '✗'}</span>
+        <span class="dt-label">${escapeHtml(t.label)}</span>
+        <span class="dt-detail">${escapeHtml(t.detail)}</span>
+        ${t.caveat ? `<span class="dt-caveat" title="${escapeHtml(t.caveat)}">CAVEAT</span>` : ''}
+      </div>`).join('');
+
+    const dec = d.decay ?? [];
+    $('disconf-decay').innerHTML = dec.length ? `
+      <h3>THESIS DECAY — ELAPSED TIME AGAINST STATED HORIZON</h3>
+      <p class="sig-note">A fact, not a criticism — and the fact a confirmation machine would never surface about itself.</p>
+      <table class="decay-table">
+        <tr><th>FORECAST</th><th>STATED</th><th>HORIZON</th><th>ELAPSED</th><th></th></tr>
+        ${dec.map((x) => `<tr class="${x.overdueMonths > 0 ? 'overdue' : ''}">
+          <td>${escapeHtml(x.label)}</td><td>${x.statedOn}</td><td>${x.horizonMonths}m</td>
+          <td>${x.elapsedMonths}m</td>
+          <td>${x.overdueMonths > 0 ? `<b>OVERDUE ${x.overdueMonths}m</b>` : `<span class="dt-detail">${Math.max(0, (x.horizonMonths - x.elapsedMonths)).toFixed(1)}m remaining</span>`}</td>
+        </tr>`).join('')}
+      </table>` : '';
   }
 
   function renderBezel() {

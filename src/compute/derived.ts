@@ -45,6 +45,9 @@ export function computeDerived(d: Derivation, seriesMap: Map<string, Point[]>): 
       return responseGap(seriesMap.get(d.credit) ?? [], seriesMap.get(d.balance) ?? [], d.rocDays);
     case 'capitulation':
       return capitulation(d.inputs.map((id) => seriesMap.get(id) ?? []), d.rocDays);
+    case 'erp_attrib':
+      return erpAttribution(seriesMap.get(d.index) ?? [], seriesMap.get(d.cashflow) ?? [],
+        seriesMap.get(d.riskfree) ?? [], d.leg);
   }
 }
 
@@ -149,6 +152,34 @@ function capitulation(inputs: Point[][], rocDays: number): Point[] {
       if (l && l.date >= isoDaysAgo(date, 21)) { sum += l.value; n++; }
     }
     if (n === ranked.length) out.push({ date, value: sum / n });
+  }
+  return out;
+}
+
+/** First-order attribution of the monthly change in a cash-yield ERP proxy
+ *  (CF/Index + g − rf) to one of its three drivers. The legs sum to the
+ *  change in the proxy, not to the change in Damodaran's solved ERP — the
+ *  UI says so. The point is the SIGN and the mix: a falling ERP driven by
+ *  the index rallying is not the same event as one driven by rates rising.
+ *  Returned in percentage points, matching the ERP series' units. */
+function erpAttribution(index: Point[], cf: Point[], rf: Point[],
+  leg: 'index' | 'cashflow' | 'riskfree'): Point[] {
+  if (!index.length || !cf.length || !rf.length) return [];
+  const cfBy = new Map(cf.map((p) => [p.date, p.value]));
+  const rfBy = new Map(rf.map((p) => [p.date, p.value]));
+  const out: Point[] = [];
+  for (let i = 1; i < index.length; i++) {
+    const d = index[i].date, dPrev = index[i - 1].date;
+    const i1 = index[i].value, i0 = index[i - 1].value;
+    const c1 = cfBy.get(d), c0 = cfBy.get(dPrev);
+    const r1 = rfBy.get(d), r0 = rfBy.get(dPrev);
+    if (c1 === undefined || c0 === undefined || r1 === undefined || r0 === undefined) continue;
+    if (Math.abs(i1) < 1e-9 || Math.abs(i0) < 1e-9) continue;
+    let v: number;
+    if (leg === 'index') v = (c0 / i1 - c0 / i0) * 100;
+    else if (leg === 'cashflow') v = (c1 / i1 - c0 / i1) * 100;
+    else v = -(r1 - r0); // rf series is already in percentage points
+    out.push({ date: d, value: v });
   }
   return out;
 }
