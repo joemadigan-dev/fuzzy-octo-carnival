@@ -48,7 +48,12 @@ export type Derivation =
    *  A falling ERP because the index rallied is froth; a falling ERP
    *  because the risk-free rate rose is a repricing. Not the same thing. */
   | { type: 'erp_attrib'; index: string; cashflow: string; riskfree: string;
-      leg: 'index' | 'cashflow' | 'riskfree' };
+      leg: 'index' | 'cashflow' | 'riskfree' }
+  /** Velocity-from-trough: value minus its own minimum over a trailing
+   *  window. A level of 2.0% held for a year is a different world from
+   *  2.0% reached from 1.2% in four months, and the level alone cannot
+   *  tell them apart. `scale` converts units (100 for pp → bps). */
+  | { type: 'trough_impulse'; input: string; months: number; scale?: number };
 
 export interface KpiDef {
   id: string;
@@ -97,6 +102,15 @@ export interface KpiDef {
   /** Named horizontal levels → cron computes a state flag for the tile,
    *  e.g. IGV vs the head-and-shoulders shoulder/top. */
   flagLevels?: { shoulder: number; top: number };
+  /** Ordered ascending bands → discrete state flag plus days held in it.
+   *  The highest band whose `atLeast` is met wins. */
+  stateBands?: { atLeast: number; label: string }[];
+  /** Appended to any stateBands alert. A band crossing that fires a webhook
+   *  at 3am must carry whatever qualification the level deserves — an
+   *  unqualified "DANGER" alert launders an untested threshold into a fact. */
+  stateBandsCaveat?: string;
+  /** Horizontal reference line drawn on the tile sparkline and chart. */
+  refLine?: { value: number; label: string };
   /** Shown on the tile — for dated forecasts ("by 2027-02"). */
   deadline?: string;
 }
@@ -208,6 +222,26 @@ export const KPIS: KpiDef[] = [
     staleAfterDays: 12, // can only be as fresh as DXY's weekly publication
     derive: { type: 'rolling_corr', a: 'wti', b: 'dxy', window: 60 },
     subIndex: 'four_bodies', subSign: 1,
+  },
+
+  {
+    // Dhaval Joshi (BCA) identifies 75bps as the level beyond which equity
+    // markets crack. The sweep in src/compute/impulse.ts tests that claim
+    // across 75 parameter combinations and does NOT support it, so this
+    // tile is deliberately NOT wired into PRESSURE — no subIndex. It is
+    // carried as an observation with its own diagnostic attached.
+    id: 'real_yield_impulse', label: '10Y REAL IMPULSE', cluster: 'four_bodies',
+    unit: 'bp', decimals: 0, showPct: false, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'Rise in the 10Y real yield from its own 18-month trough. A fast rise tightens conditions and compresses long-duration valuations — the AI complex most of all. Velocity from trough, not level. NOT in PRESSURE: the parameter sweep does not support the published 75bp threshold.',
+    derive: { type: 'trough_impulse', input: 'us10y_real', months: 18, scale: 100 },
+    stateBands: [
+      { atLeast: 0, label: 'BELOW' },
+      { atLeast: 50, label: 'APPROACHING' },
+      { atLeast: 75, label: 'DANGER' },
+    ],
+    stateBandsCaveat: 'The 50/75bp levels are the published claim, not a validated one — the parameter sweep finds the median 3-month S&P return after a 75bp crossing is POSITIVE across 18 crossings. This alert marks a level being reached, not a forecast.',
+    refLine: { value: 75, label: '75bp' },
   },
 
   // ═══ CREDIT STRESS ════════════════════════════════════════════════════

@@ -122,14 +122,22 @@ function evaluate(m: Map<string, Point[]>, d: string): TestResult[] {
     });
   }
 
-  // 5. real yields falling, not rising
+  // 5. real yields easing — re-specified against the trough impulse, the
+  //    sharper form of the same test: how far real yields have risen from
+  //    their own 18-month low, and whether that is now easing
   {
+    const imp = m.get('real_yield_impulse');
+    const v = at(imp, d), c = change(imp, d, 60);
     const r = m.get('us10y_real');
-    const c = change(r, d, 60);
+    const rc = change(r, d, 60);
+    const pass = v === null || c === null ? (rc === null ? null : rc < 0) : (v < 50 || c < 0);
     out.push({
-      id: 'real_yields_falling', label: 'Real yields falling, not rising',
-      pass: c === null ? null : c < 0,
-      detail: c === null ? 'no real-yield data' : `10Y real 60d ${c > 0 ? '+' : ''}${(c * 100).toFixed(0)}bp`,
+      id: 'real_yields_falling', label: 'Real-yield impulse easing, not building',
+      pass,
+      detail: v === null || c === null
+        ? (rc === null ? 'no real-yield data' : `10Y real 60d ${rc > 0 ? '+' : ''}${(rc * 100).toFixed(0)}bp`)
+        : `impulse ${v.toFixed(0)}bp from 18m trough, 60d ${c > 0 ? '+' : ''}${c.toFixed(0)}bp`,
+      caveat: 'The 75bp threshold this impulse is usually quoted against is not supported by the parameter sweep; this test uses direction and a 50bp floor, not the published level.',
     });
   }
 

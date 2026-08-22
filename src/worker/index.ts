@@ -80,6 +80,7 @@ async function apiWall(env: Env): Promise<Response> {
       signRationale: def.signRationale ?? null,
       freq: def.freq ?? 'daily',
       deadline: def.deadline ?? null,
+      refLine: def.refLine ?? null,
       latest: s ? (s.latest_value as number | null) : null,
       latestDate: s ? (s.latest_date as string | null) : null,
       changes: s ? JSON.parse(s.changes as string) : {},
@@ -155,6 +156,7 @@ async function apiBarometer(env: Env): Promise<Response> {
     analogues: detail.analogues ?? [],
     disconfirmation: detail.disconfirmation ?? null,
     baseRates: detail.baseRates ?? null,
+    impulseSweep: detail.impulseSweep ?? null,
     diagnostics: detail.diagnostics,
     history: chart ? JSON.parse(chart.points) : null,
     changes: (changes.results ?? []).map((c) => ({ ...c, drivers: JSON.parse(c.drivers as string) })),
@@ -169,7 +171,8 @@ async function apiSeries(env: Env, rawId: string): Promise<Response> {
     .bind(id).first<{ points: string }>();
   if (!row) return json({ error: 'no chart data yet' }, 503);
   return new Response(
-    `{"id":${JSON.stringify(id)},"label":${JSON.stringify(def.label)},"unit":${JSON.stringify(def.unit)},"decimals":${def.decimals},"data":${row.points}}`,
+    `{"id":${JSON.stringify(id)},"label":${JSON.stringify(def.label)},"unit":${JSON.stringify(def.unit)},"decimals":${def.decimals}`
+    + `,"refLine":${JSON.stringify(def.refLine ?? null)},"data":${row.points}}`,
     { status: 200, headers: baseHeaders(300) },
   );
 }

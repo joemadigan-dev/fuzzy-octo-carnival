@@ -106,6 +106,33 @@ export async function runAlerts(
     }
   }
 
+  // 6. ordered state bands crossing — a named level being reached (the
+  //    real-yield impulse entering APPROACHING at 50bp or DANGER at 75bp).
+  //    Compared on band identity, never on the tile's flag string, which
+  //    carries a days-held counter and would therefore differ every day.
+  for (const def of KPIS) {
+    if (!def.stateBands?.length) continue;
+    const pts = seriesMap.get(def.id) ?? [];
+    if (pts.length < 2) continue;
+    const bandOf = (v: number) => {
+      let name = def.stateBands![0].label;
+      for (const b of def.stateBands!) if (v >= b.atLeast) name = b.label;
+      return name;
+    };
+    const cur = pts[pts.length - 1], prev = pts[pts.length - 2];
+    const now = bandOf(cur.value), was = bandOf(prev.value);
+    if (now === was) continue;
+    const unit = def.unit ? ` ${def.unit}` : '';
+    candidates.push({
+      kind: 'state',
+      key: `${def.id}:${now}`,
+      message: `${def.label}: ${was} → ${now} at ${cur.value.toFixed(def.decimals)}${unit} on ${cur.date}`
+        + ` (was ${prev.value.toFixed(def.decimals)}${unit}).`
+        + (def.stateBandsCaveat ? ` ${def.stateBandsCaveat}` : ''),
+      detail: { was, now, value: cur.value, date: cur.date },
+    });
+  }
+
   // insert (PK dedupes = one per state per day) and deliver the new ones
   for (const c of candidates) {
     const res = await env.DB.prepare(

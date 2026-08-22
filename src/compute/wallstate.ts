@@ -151,6 +151,18 @@ export function buildWallState(def: KpiDef, points: Point[], opts: BuildOpts): W
   if (latest && def.derive?.type === 'capitulation' && latest.value >= 90) {
     flag = 'CAPITULATION';
   }
+  // ordered state bands + how long the current one has held
+  if (latest && def.stateBands?.length) {
+    const bandOf = (v: number) => {
+      let name = def.stateBands![0].label;
+      for (const b of def.stateBands!) if (v >= b.atLeast) name = b.label;
+      return name;
+    };
+    const cur = bandOf(latest.value);
+    let days = 0;
+    for (let i = points.length - 1; i >= 0 && bandOf(points[i].value) === cur; i--) days++;
+    flag = days > 1 ? `${cur} ${days}d` : cur;
+  }
 
   return {
     series_id: def.id,

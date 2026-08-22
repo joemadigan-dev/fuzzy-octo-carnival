@@ -45,6 +45,8 @@ export function computeDerived(d: Derivation, seriesMap: Map<string, Point[]>): 
       return responseGap(seriesMap.get(d.credit) ?? [], seriesMap.get(d.balance) ?? [], d.rocDays);
     case 'capitulation':
       return capitulation(d.inputs.map((id) => seriesMap.get(id) ?? []), d.rocDays);
+    case 'trough_impulse':
+      return troughImpulse(seriesMap.get(d.input) ?? [], d.months, d.scale ?? 1);
     case 'erp_attrib':
       return erpAttribution(seriesMap.get(d.index) ?? [], seriesMap.get(d.cashflow) ?? [],
         seriesMap.get(d.riskfree) ?? [], d.leg);
@@ -152,6 +154,25 @@ function capitulation(inputs: Point[][], rocDays: number): Point[] {
       if (l && l.date >= isoDaysAgo(date, 21)) { sum += l.value; n++; }
     }
     if (n === ranked.length) out.push({ date, value: sum / n });
+  }
+  return out;
+}
+
+/** Value minus its own trailing-window minimum, via a monotonic deque so
+ *  the whole history is O(n) rather than O(n·window) — the parameter sweep
+ *  runs this five times over 20+ years of daily data inside one cron run. */
+function troughImpulse(pts: Point[], months: number, scale: number): Point[] {
+  if (!pts.length) return [];
+  const winDays = Math.round(months * 30.44);
+  const out: Point[] = [];
+  const dq: number[] = []; // indices, values ascending
+  let head = 0;
+  for (let i = 0; i < pts.length; i++) {
+    while (dq.length > head && pts[dq[dq.length - 1]].value >= pts[i].value) dq.pop();
+    dq.push(i);
+    const from = isoDaysAgo(pts[i].date, winDays);
+    while (dq.length > head && pts[dq[head]].date < from) head++;
+    out.push({ date: pts[i].date, value: (pts[i].value - pts[dq[head]].value) * scale });
   }
   return out;
 }

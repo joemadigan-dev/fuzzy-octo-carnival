@@ -13,6 +13,7 @@ import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
 import { computeBarometer } from '../compute/barometer.ts';
 import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { computeBaseRates } from '../compute/baserates.ts';
+import { computeImpulseSweep } from '../compute/impulse.ts';
 import { runAlerts, reviewJournal } from './accountability.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
@@ -220,6 +221,20 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       log.push(`disconfirmation: FAILED — ${e}`);
     }
 
+    // Parameter sweep for the real-yield impulse. Runs every cron so the
+    // verdict on the page is always computed from current data, never a
+    // remembered conclusion.
+    let impulseSweep = null;
+    try {
+      impulseSweep = computeImpulseSweep(seriesMap);
+      if (impulseSweep) {
+        const v = impulseSweep.verdict;
+        log.push(`impulse sweep: published med3m=${v.publishedMed3m}% · ${v.negativeCells}/${v.totalCells} cells negative · inPressure=${v.inPressure}`);
+      }
+    } catch (e) {
+      log.push(`impulse sweep: FAILED — ${e}`);
+    }
+
     let baseRates = null;
     try {
       baseRates = computeBaseRates(seriesMap);
@@ -237,6 +252,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       analogues: result.analogues,
       disconfirmation: disc,
       baseRates,
+      impulseSweep,
       diagnostics: result.diagnostics,
     })));
 
@@ -347,6 +363,7 @@ function inputsOf(kpi: KpiDef): string[] {
     case 'response_gap': return [d.credit, d.balance];
     case 'capitulation': return d.inputs;
     case 'erp_attrib': return [d.index, d.cashflow, d.riskfree];
+    case 'trough_impulse': return [d.input];
   }
 }
 

@@ -61,22 +61,27 @@
   }
 
   // ── sparkline (inline SVG, shape only) ───────────────────────────────
-  function sparkSvg(spark, dirCls) {
+  /** `ref` is a named threshold (e.g. the impulse's 75bp). It is forced into
+   *  the y-domain so the line is always on screen — a threshold that
+   *  silently clips off the top would read as "not near it". */
+  function sparkSvg(spark, dirCls, ref) {
     if (!spark || !spark.v || spark.v.length < 2) {
       return `<svg viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     }
     const v = spark.v;
     let min = Infinity, max = -Infinity;
     for (const x of v) { if (x < min) min = x; if (x > max) max = x; }
+    if (ref) { if (ref.value < min) min = ref.value; if (ref.value > max) max = ref.value; }
     const span = max - min || 1;
     const W = 100, H = 26, pad = 2;
-    const pts = v.map((x, i) => {
-      const px = (i / (v.length - 1)) * W;
-      const py = pad + (1 - (x - min) / span) * (H - 2 * pad);
-      return `${px.toFixed(1)},${py.toFixed(1)}`;
-    });
+    const y = (x) => pad + (1 - (x - min) / span) * (H - 2 * pad);
+    const pts = v.map((x, i) => `${((i / (v.length - 1)) * W).toFixed(1)},${y(x).toFixed(1)}`);
     const last = pts[pts.length - 1].split(',');
+    const refLine = ref
+      ? `<line class="spark-ref" x1="0" y1="${y(ref.value).toFixed(1)}" x2="${W}" y2="${y(ref.value).toFixed(1)}" vector-effect="non-scaling-stroke"/>`
+      : '';
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      ${refLine}
       <polyline class="spark-line" points="${pts.join(' ')}" vector-effect="non-scaling-stroke"/>
       <circle class="spark-dot ${dirCls}" cx="${last[0]}" cy="${last[1]}" r="2.4"/>
     </svg>`;
@@ -110,7 +115,8 @@
       <div class="tile-num">${fmtValue(k, k.latest)}</div>
       <div class="tile-chg ${c.cls === 'flat' ? 'flat' : cls}">${c.html}</div>
       ${detail}
-      <div class="tile-spark">${sparkSvg(k.sparks?.[tf], dirCls)}</div>
+      <div class="tile-spark">${sparkSvg(k.sparks?.[tf], dirCls, k.refLine)}
+        ${k.refLine ? `<span class="spark-ref-label">${escapeHtml(k.refLine.label)}</span>` : ''}</div>
       <div class="tile-chart" id="chart-${k.id}"></div>
       <div class="tile-ts">${ts}</div>`;
   }
@@ -250,6 +256,18 @@
       const [ts, vs] = body.data;
       if (!ts || ts.length < 2) { host.textContent = 'no chart data'; return; }
       const w = host.clientWidth || host.parentElement.clientWidth - 24;
+
+      // Episodes: every date this series crossed its named threshold, with
+      // what the S&P then did. Drawn for all of them, not only the ones
+      // usually quoted — the full denominator is the honest picture.
+      let episodes = [];
+      if (id === 'real_yield_impulse') {
+        const b = await loadBaro();
+        episodes = (b?.impulseSweep?.crossings ?? [])
+          .map((c) => ({ ...c, t: Date.parse(c.date + 'T00:00:00Z') / 1000 }))
+          .filter((c) => c.t >= ts[0] && c.t <= ts[ts.length - 1]);
+      }
+
       const plot = new uPlot({
         width: w, height: 240,
         scales: { x: { time: true } },
@@ -261,13 +279,69 @@
         series: [{}, { label: body.label, stroke: INK, width: 1.5, points: { show: false } }],
         legend: { show: false },
         cursor: { y: false },
+        hooks: {
+          draw: [(u) => {
+            const ctx = u.ctx;
+            ctx.save();
+            for (const e of episodes) {
+              const x = u.valToPos(e.t, 'x', true);
+              if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
+              ctx.strokeStyle = e.cited ? 'rgba(220,73,86,0.75)' : 'rgba(95,99,93,0.4)';
+              ctx.lineWidth = e.cited ? 1.6 : 1;
+              ctx.setLineDash(e.cited ? [] : [3, 3]);
+              ctx.beginPath();
+              ctx.moveTo(x, u.bbox.top); ctx.lineTo(x, u.bbox.top + u.bbox.height); ctx.stroke();
+            }
+            if (body.refLine) {
+              const y = u.valToPos(body.refLine.value, 'y', true);
+              if (y >= u.bbox.top && y <= u.bbox.top + u.bbox.height) {
+                ctx.strokeStyle = INK; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+                ctx.beginPath();
+                ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
+              }
+            }
+            ctx.restore();
+          }],
+        },
       }, [ts, vs], host);
       charts.set(id, plot);
+      if (body.refLine || episodes.length) mountChartKey(host, body.refLine, episodes);
       if (id === 'erp') await mountErpDecomposition(host);
     } catch (e) {
       host.textContent = `chart unavailable — ${e.message}`;
     }
   }
+
+  /** Key + episode table beneath an expanded chart carrying a threshold. */
+  function mountChartKey(host, refLine, episodes) {
+    const box = document.createElement('div');
+    box.className = 'chart-key';
+    const nCited = episodes.filter((e) => e.cited).length;
+    const settled = episodes.filter((e) => e.dd6m !== null && e.dd6m !== undefined);
+    const rows = episodes.length ? `
+      <div class="ep-scroll"><table class="ep-table">
+        <tr><th>CROSSED</th><th>S&P +3M</th><th>+6M</th><th>WORST DD 6M</th><th></th></tr>
+        ${episodes.slice().reverse().map((e) => `
+          <tr class="${e.cited ? 'ep-cited' : ''}">
+            <td>${e.date}</td>
+            ${pctCell(e.r3m)}${pctCell(e.r6m)}${pctCell(e.dd6m)}
+            <td class="in-meta">${e.cited ? 'CITED AS EVIDENCE' : ''}</td>
+          </tr>`).join('')}
+      </table></div>
+      <p class="sig-note">${nCited} of ${episodes.length} crossings shown here are the ones usually cited.
+        ${settled.length ? `${settled.filter((e) => e.dd6m > -10).length} of ${settled.length} settled crossings were not followed by a 10% drawdown within six months.` : ''}
+        Green is a rise, red a fall — no directional claim is being made about what a crossing implies.</p>` : '';
+    box.innerHTML = `
+      <div class="chart-key-head">
+        ${refLine ? `<span class="ck ck-ref"></span>${escapeHtml(refLine.label)} threshold` : ''}
+        ${episodes.length ? `<span class="ck ck-cited"></span>cited episode <span class="ck ck-other"></span>other crossing at the same threshold` : ''}
+      </div>${rows}`;
+    host.appendChild(box);
+  }
+
+  const pctCell = (v) => v === null || v === undefined
+    ? '<td class="pending">—</td>'
+    : `<td class="${v < 0 ? 'down' : 'up'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</td>`;
 
   // Stacked contribution bar: WHY the ERP moved each month. A fall driven
   // by the index rallying is froth; one driven by the risk-free rate
@@ -409,6 +483,24 @@
     if ($('signal-panel').classList.contains('open')) renderBaroBody();
   }
 
+  /** Single in-flight fetch of the heavy payload — the disclosure panel and
+   *  the impulse tile's episode markers both need it. */
+  let baroPending = null;
+  function loadBaro() {
+    if (baro) return Promise.resolve(baro);
+    if (!baroPending) {
+      baroPending = fetch('/api/barometer')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((b) => {
+          if (b) { baro = b; if (b.zonePcts) window.__zonePcts = b.zonePcts; }
+          return baro;
+        })
+        .catch(() => null)
+        .finally(() => { baroPending = null; });
+    }
+    return baroPending;
+  }
+
   async function openBaro() {
     const panel = $('signal-panel');
     const open = panel.classList.toggle('open');
@@ -416,15 +508,7 @@
     $('signal-body').hidden = !open;
     $('sig-disclose').textContent = open ? 'HIDE ▴' : 'SHOW GAUGES + BACKTEST + DIAGNOSTICS ▾';
     if (open) {
-      if (!baro) {
-        try {
-          const res = await fetch('/api/barometer');
-          if (res.ok) {
-            baro = await res.json();
-            if (baro.zonePcts) window.__zonePcts = baro.zonePcts;
-          }
-        } catch { /* body renders what it can */ }
-      }
+      await loadBaro();
       renderBaroBody();
     }
   }
@@ -661,7 +745,101 @@
     renderAnalogues();
     renderBaseRates();
     renderAlerts();
+    renderSweep();
     renderDiagnostics();
+  }
+
+  // ── parameter sweep for the real-yield impulse ───────────────────────
+  // The heatmap answers one question: does the effect hold across a broad
+  // region, or only in the published cell? Cells are coloured by the sign
+  // of the median 3-month forward S&P return, so a genuine signal would
+  // appear as a contiguous red mass. Scattered specks are noise.
+  function renderSweep() {
+    const s = baro?.impulseSweep;
+    const host = $('sig-sweep');
+    if (!s) { host.hidden = true; return; }
+    host.hidden = false;
+    const v = s.verdict, p = s.published;
+
+    const settled = s.crossings.filter((c) => c.dd6m !== null);
+    const noDd10 = settled.filter((c) => c.dd6m > -10).length;
+    const noDd5 = settled.filter((c) => c.dd6m > -5).length;
+
+    $('sweep-verdict').innerHTML = `
+      <div class="sv-row">
+        <span class="sv-stat"><b>${p ? p.crossings : '—'}</b><i>crossings at 18m / 75bp</i></span>
+        <span class="sv-stat ${v.publishedMed3m > 0 ? 'sv-bad' : ''}"><b>${v.publishedMed3m === null ? '—' : (v.publishedMed3m > 0 ? '+' : '') + v.publishedMed3m + '%'}</b><i>median S&P 3m after a crossing</i></span>
+        <span class="sv-stat sv-bad"><b>${settled.length ? `${noDd10}/${settled.length}` : '—'}</b><i>false positives — no 10% drawdown in 6m</i></span>
+        <span class="sv-stat"><b>${settled.length ? `${noDd5}/${settled.length}` : '—'}</b><i>no 5% drawdown in 6m</i></span>
+        <span class="sv-stat"><b>${v.negativeCells}/${v.totalCells}</b><i>cells with a negative median 3m return</i></span>
+      </div>
+      <p class="sv-summary">${escapeHtml(v.summary)}</p>
+      <p class="sig-note">Cited episodes: mean 6-month return <b>${sgn(v.citedMeanR6m)}</b>, mean worst drawdown <b>${sgn(v.citedMeanDD)}</b>.
+        Every other crossing at the same setting: mean 6-month return <b>${sgn(v.otherMeanR6m)}</b>, mean worst drawdown <b>${sgn(v.otherMeanDD)}</b>.
+        The three episodes are the worst three, which is what selecting on the outcome produces.</p>
+      <div class="sv-decision" data-in="${v.inPressure}">
+        ${v.inPressure
+          ? 'ADMITTED TO PRESSURE — the effect survives the sweep.'
+          : 'NOT ADMITTED TO PRESSURE — the tile is carried as an observation, weighted zero, and labelled untested. The sweep does not support the published threshold, so it does not get to move the barometer.'}
+      </div>`;
+
+    // three grids over the same axes: what the cell says, how often it
+    // fires, and how often it fires into nothing
+    const grids = [
+      { key: 'med3m', label: 'MEDIAN S&P 3-MONTH RETURN AFTER A CROSSING', fmt: (c) => c.med3m === null ? '' : c.med3m.toFixed(1), tone: (c) => c.med3m === null ? null : -c.med3m / 6 },
+      { key: 'crossings', label: 'CROSSINGS IN THE FULL RECORD', fmt: (c) => String(c.crossings), tone: () => null },
+      { key: 'fp10', label: 'FALSE POSITIVES — CROSSINGS WITH NO 10% DRAWDOWN IN 6M', fmt: (c) => c.fp10 === null ? '' : `${c.fp10}/${c.evaluated}`, tone: (c) => (c.fp10 === null || !c.evaluated) ? null : c.fp10 / c.evaluated },
+    ];
+    const byCell = new Map(s.cells.map((c) => [`${c.months}|${c.threshold}`, c]));
+    const months = [...new Set(s.cells.map((c) => c.months))].sort((a, b) => a - b);
+    const thr = [...new Set(s.cells.map((c) => c.threshold))].sort((a, b) => a - b);
+
+    $('sweep-grids').innerHTML = grids.map((g) => `
+      <div class="sweep-grid">
+        <h4>${g.label}</h4>
+        <div class="sw-scroll"><table class="sw-table">
+          <tr><th>LOOKBACK</th>${thr.map((t) => `<th>${t}</th>`).join('')}</tr>
+          ${months.map((m) => `<tr><th>${m}m</th>${thr.map((t) => {
+            const c = byCell.get(`${m}|${t}`);
+            if (!c) return '<td>—</td>';
+            const pub = m === 18 && t === 75;
+            return `<td class="${pub ? 'sw-pub' : ''}" style="background:${heat(g.tone(c))}"
+              title="${m}m / ${t}bp — ${c.crossings} crossings, median 3m ${c.med3m === null ? 'n/a' : c.med3m + '%'}, median worst 6m DD ${c.medDD6m === null ? 'n/a' : c.medDD6m + '%'}">${g.fmt(c)}</td>`;
+          }).join('')}</tr>`).join('')}
+        </table></div>
+        <div class="sw-axis">threshold, basis points above the trailing trough → · boxed cell = published 18m / 75bp</div>
+      </div>`).join('');
+
+    const cr = s.crossings.slice().reverse();
+    $('sweep-crossings').innerHTML = cr.length ? `
+      <tr><th>DATE</th><th>S&P +3M</th><th>+6M</th><th>WORST DD 6M</th><th></th></tr>
+      ${cr.map((c) => `<tr class="${c.cited ? 'ep-cited' : ''}">
+        <td>${c.date}</td>${pctCell(c.r3m)}${pctCell(c.r6m)}${pctCell(c.dd6m)}
+        <td class="in-meta">${c.cited ? 'CITED AS EVIDENCE' : ''}</td></tr>`).join('')}`
+      : '<tr><td>no crossings computed</td></tr>';
+
+    $('sweep-overlap').innerHTML = `
+      <tr><th>PAIR</th><th>ρ</th><th></th></tr>
+      ${s.overlap.map((o) => `<tr class="${o.rho !== null && Math.abs(o.rho) >= 0.7 ? 'corr-flag-row' : ''}">
+        <td>${kpiLabel(o.a)} × ${kpiLabel(o.b)}</td>
+        <td>${o.rho === null ? '—' : o.rho.toFixed(2)}</td>
+        <td class="in-meta">${o.rho === null ? 'insufficient overlap' : Math.abs(o.rho) >= 0.7 ? 'REDUNDANT' : 'independent'}</td></tr>`).join('')}`;
+
+    $('sweep-erp-note').innerHTML = `The impulse is genuinely independent of the real-yield level already feeding PRESSURE
+      (ρ=${s.overlap[0]?.rho ?? '—'}), but independent is not the same as predictive, and only the second of those earns a weight.
+      It is not independent of the <b>valuation</b> layer by construction: a rising real yield raises the discount rate in
+      Damodaran's implied ERP, mechanically compressing the ERP for a given price and cash-flow path. Read the ERP move
+      through the decomposition bar on that tile — a compression driven by the RATES leg is this same impulse arriving in
+      ALTITUDE, and counting it twice would be double-counting one fact.`;
+  }
+
+  const sgn = (v) => v === null || v === undefined ? '—' : `${v > 0 ? '+' : ''}${v}%`;
+
+  /** t in roughly [-1,1]: positive = stress-confirming, red; negative = green. */
+  function heat(t) {
+    if (t === null || t === undefined || !isFinite(t)) return 'transparent';
+    const a = Math.min(0.55, Math.abs(t) * 0.55);
+    return t > 0 ? `rgba(220,73,86,${a.toFixed(3)})` : `rgba(11,100,51,${a.toFixed(3)})`;
   }
 
   // Five closest historical episodes and what followed each. Dispersion is
