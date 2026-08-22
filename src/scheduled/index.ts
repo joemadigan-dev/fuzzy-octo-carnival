@@ -32,6 +32,8 @@ export interface Env {
 const REFETCH_DAYS = 45;
 const CHART_MAX_POINTS = 780;
 const BARO_CHART_MAX = 1560; // backtest chart resolution (both layers)
+/** Truncated histories are re-fetched in full at most this many per run. */
+const DEEP_BACKFILLS_PER_RUN = 8;
 
 interface FetchOutcome {
   points: Point[];
@@ -50,10 +52,34 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   const today = nowIso.slice(0, 10);
   const log: string[] = [];
 
+  // Stage timings. The scheduled path has ~30s of CPU and no way to report
+  // exceeding it: the isolate is killed mid-run, `last_run` is never
+  // written, and the failure is silent. These marks are what turns that
+  // into a diagnosable event — the last mark logged is where it died.
+  const t0 = Date.now();
+  let tPrev = t0;
+  const marks: string[] = [];
+  const mark = (stage: string) => {
+    const now = Date.now();
+    const line = `${stage} ${((now - tPrev) / 1000).toFixed(1)}s (elapsed ${((now - t0) / 1000).toFixed(1)}s)`;
+    marks.push(line);
+    log.push(`⏱ ${line}`);
+    tPrev = now;
+  };
+  /** Persist the timings so far. Called mid-run as well as at the end: if
+   *  the isolate is killed, the mid-run checkpoint is the only evidence
+   *  left of how far it got and which stage was running. */
+  const saveProgress = async (done: boolean) => {
+    await env.DB.prepare(
+      `INSERT INTO meta (key, value) VALUES ('last_run_log', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    ).bind(JSON.stringify({ at: nowIso, done, marks, failures: log.filter((l) => l.includes('FAILED')) })).run();
+  };
+
   const fetched = KPIS.filter((k) => k.source && k.seriesId);
   const derived = KPIS.filter((k) => k.derive);
 
   // ── 1. fetch + upsert each sourced series ────────────────────────────
+  let deepBudget = DEEP_BACKFILLS_PER_RUN;
   const outcomes = new Map<string, FetchOutcome>();
   await Promise.all(fetched.map(async (kpi) => {
     try {
@@ -62,7 +88,26 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
         .bind(kpi.id).first<{ d: string | null; n: number }>();
       const minRows = kpi.freq === 'quarterly' ? 10 : kpi.freq === 'weekly' ? 30
         : kpi.freq === 'monthly' ? 24 : 100;
-      const needBackfill = !maxRow?.d || (maxRow.n ?? 0) < minRows;
+
+      // A row count cannot detect a TRUNCATED history. A series backfilled
+      // from a shorter window than BACKFILL_START passes every freshness
+      // check forever — it has plenty of rows and a current last date — and
+      // silently shortens every percentile, z-score and backtest built on
+      // it. So the deep backfill is claimed once per series per
+      // BACKFILL_START value: if the marker does not match, re-fetch the
+      // whole history and reset it. Moving BACKFILL_START earlier
+      // re-triggers it everywhere by construction.
+      //
+      // Budgeted per run: healing sixty full histories (seven of them
+      // multi-megabyte workbooks) in one cron would exceed the CPU limit
+      // and kill the run before it wrote anything. A first backfill against
+      // an empty table is NOT budgeted — the two clauses above still force
+      // it — so only the healing path is paced.
+      const deepKey = `deep:${kpi.id}`;
+      const deepRow = await env.DB.prepare('SELECT value FROM meta WHERE key = ?').bind(deepKey).first<{ value: string }>();
+      const needDeep = deepRow?.value !== BACKFILL_START && deepBudget > 0;
+      if (needDeep) deepBudget--;
+      const needBackfill = !maxRow?.d || (maxRow.n ?? 0) < minRows || needDeep;
 
       // Large binary workbooks are parsed only where there is CPU budget
       // for them. Skipping leaves the stored history untouched, so the
@@ -104,13 +149,20 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
           "INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         ).bind(`fetched:${kpi.id}`, today).run();
       }
+      if (needDeep) {
+        await env.DB.prepare(
+          "INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        ).bind(deepKey, BACKFILL_START).run();
+      }
       outcomes.set(kpi.id, { points: [], ok: true });
-      log.push(`${kpi.id}: fetched ${pts.length} obs from ${from} via ${via}`);
+      log.push(`${kpi.id}: fetched ${pts.length} obs from ${from} via ${via}${needDeep ? ' [deep backfill]' : ''}`);
     } catch (e) {
       outcomes.set(kpi.id, { points: [], ok: false, error: String(e instanceof Error ? e.message : e) });
       log.push(`${kpi.id}: FETCH FAILED — ${e}`);
     }
   }));
+
+  mark('fetch');
 
   // ── 2. load full history for every sourced series ────────────────────
   const seriesMap = new Map<string, Point[]>();
@@ -119,6 +171,8 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     seriesMap.set(kpi.id, pts);
     outcomes.get(kpi.id)!.points = pts;
   }
+
+  mark('load');
 
   // ── 3. compute + upsert derived series (multi-pass: derived KPIs may
   //       consume other derived KPIs, e.g. breadth = roc(rsp/spy)) ──────
@@ -155,6 +209,8 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     outcomes.set(id, { points: [], ok: false, error: 'unresolved derivation dependency cycle' });
     log.push(`${id}: DERIVE SKIPPED — dependency cycle`);
   }
+
+  mark('derive');
 
   // ── 4. wall_state + expanded-chart data per visible KPI ──────────────
   const prevSuccess = new Map<string, string | null>();
@@ -205,10 +261,13 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     ])));
   }
   await batched(env.DB, stateStmts);
+  mark('wall_state');
+  await saveProgress(false);
 
   // ── 5. THE BAROMETER: two layers + backtest + diagnostics ────────────
   try {
     const result = computeBarometer(seriesMap);
+    mark('barometer');
     const stmts: D1PreparedStatement[] = [];
 
     // Disconfirmation gets the same treatment as the stress readings:
@@ -217,6 +276,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     try {
       disc = computeDisconfirmation(seriesMap, today);
       log.push(`disconfirmation: ${disc.passing}/${disc.total} tests passing`);
+      mark('disconfirmation');
     } catch (e) {
       log.push(`disconfirmation: FAILED — ${e}`);
     }
@@ -231,6 +291,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
         const v = impulseSweep.verdict;
         log.push(`impulse sweep: published med3m=${v.publishedMed3m}% · ${v.negativeCells}/${v.totalCells} cells negative · inPressure=${v.inPressure}`);
       }
+      mark('impulse sweep');
     } catch (e) {
       log.push(`impulse sweep: FAILED — ${e}`);
     }
@@ -239,6 +300,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     try {
       baseRates = computeBaseRates(seriesMap);
       log.push(`baserates: ERP ${baseRates.currentErp}% at ${baseRates.currentPct}th pct, ${baseRates.outcomes.length} comparable years`);
+      mark('baserates');
     } catch (e) {
       log.push(`baserates: FAILED — ${e}`);
     }
@@ -327,6 +389,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       stmts.push(changeStmt.bind(c.date, c.layer, c.window, c.from_regime, c.to_regime, c.score, JSON.stringify(c.drivers)));
     }
     await batched(env.DB, stmts);
+    mark('signal write');
     const p = result.detail.pressure['2y'];
     const a = result.detail.altitude['2y'];
     log.push(`barometer: pressure=${p.score} ${p.regime} · altitude=${a.score} ${a.regime} · changes=${result.changes.length} · corrFlags=${result.diagnostics.corr.flagged.length} · analogues=${result.analogues.length}`);
@@ -345,10 +408,12 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   } catch (e) {
     log.push(`barometer: FAILED — ${e}`);
   }
+  mark('accountability');
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
   ).bind(nowIso).run();
+  await saveProgress(true);
 
   return log.join('\n');
 }

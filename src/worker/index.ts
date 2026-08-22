@@ -59,10 +59,11 @@ export default {
 // ── endpoints ──────────────────────────────────────────────────────────
 
 async function apiWall(env: Env): Promise<Response> {
-  const [stateRes, signalRow, lastRun] = await Promise.all([
+  const [stateRes, signalRow, lastRun, runLog] = await Promise.all([
     env.DB.prepare('SELECT * FROM wall_state').all<Record<string, unknown>>(),
     env.DB.prepare('SELECT computed_at, detail FROM signal_state WHERE id = 1').first<{ computed_at: string; detail: string }>(),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run'").first<{ value: string }>(),
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run_log'").first<{ value: string }>(),
   ]);
 
   const stateById = new Map((stateRes.results ?? []).map((r) => [r.series_id as string, r]));
@@ -123,6 +124,11 @@ async function apiWall(env: Env): Promise<Response> {
   return json({
     generatedAt: new Date().toISOString(),
     lastRun: lastRun?.value ?? null,
+    // Stage timings from the last cron. `done:false` means the isolate was
+    // killed part-way — the last mark names the stage that ran out of CPU.
+    // Shown on the page: a barometer computed hours before the tiles above
+    // it must say so rather than quietly presenting as current.
+    runLog: safeParse(runLog?.value ?? null),
     clusters: CLUSTERS,
     kpis,
     barometer,

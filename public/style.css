@@ -672,6 +672,12 @@ table.sig-inputs { border-collapse: collapse; width: 100%; font-family: var(--fo
 .erp-dates { display: flex; justify-content: space-between; font-family: var(--font-num); font-size: 9.5px; color: var(--muted); margin-bottom: 3px; }
 .erp-decomp-note { font-size: 10.5px; color: var(--muted); line-height: 1.35; }
 
+.run-warn {
+  font-family: var(--font-num); font-size: 11px; line-height: 1.45;
+  padding: 5px 16px; border-bottom: 1px solid var(--rule);
+  background: rgba(220, 73, 86, 0.1); color: var(--ink);
+}
+
 /* ── chart key + episode markers under an expanded tile chart ────────── */
 
 .chart-key { margin-top: 6px; border-top: 1px solid var(--rule); padding-top: 5px; }

@@ -220,6 +220,28 @@
       ? `data ${lastRun.toISOString().slice(0, 16).replace('T', ' ')}Z`
       : 'data: none yet';
 
+    // A cron run that was killed part-way leaves the tiles fresh and the
+    // barometer beneath them hours old. That must be stated, not inferred.
+    const rl = wall?.runLog;
+    const baroAt = wall?.barometer?.computedAt ? new Date(wall.barometer.computedAt) : null;
+    // compare against the tiles' own stamp, not last_run: last_run is only
+    // written when a run completes, so a killed run leaves it equally stale
+    const tileAt = (wall?.kpis ?? []).reduce((m, k) => (k.computedAt && k.computedAt > m ? k.computedAt : m), '');
+    const lagH = baroAt && tileAt ? (Date.parse(tileAt) - baroAt) / 3600000 : 0;
+    const warn = $('run-warn');
+    if (rl && rl.done === false) {
+      warn.hidden = false;
+      warn.innerHTML = `⚠ THE LAST SCHEDULED RUN DID NOT FINISH — it was cut off after
+        <b>${escapeHtml(rl.marks?.[rl.marks.length - 1] ?? 'an unknown stage')}</b>.
+        The tiles above are current; the barometer and its panels below were last computed
+        ${baroAt ? baroAt.toISOString().slice(0, 16).replace('T', ' ') + 'Z' : 'at an unknown time'}.`;
+    } else if (lagH > 3) {
+      warn.hidden = false;
+      warn.innerHTML = `⚠ The barometer below was last computed ${Math.round(lagH)}h before the tiles above.`;
+    } else {
+      warn.hidden = true;
+    }
+
     const p = wall?.barometer?.pressure?.[zwin];
     const a = wall?.barometer?.altitude?.[zwin];
     setChip('chip-pressure', 'chip-pressure-v', p, pressureTone(p?.regime));
