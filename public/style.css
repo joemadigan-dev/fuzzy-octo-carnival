@@ -309,7 +309,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   display: flex;
   justify-content: space-between;
   gap: 6px;
-  white-space: nowrap;
+  /* wraps rather than ellipsising the KPI's name: a long state chip
+     (e.g. "APPROACHING 3d") must not cost the tile its own label */
+  flex-wrap: wrap;
   overflow: hidden;
 }
 
@@ -323,7 +325,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   color: var(--muted);
 }
 .tile[data-status="error"] .tile-badge { border-color: var(--ink); color: var(--ink); }
-.tile-label > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.tile-label > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-label .badges { white-space: nowrap; }
 .tile-label .badges { display: flex; gap: 4px; flex-shrink: 0; }
 .tile-badge.flagchip { border-color: var(--ink); color: var(--ink); }
 

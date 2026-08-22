@@ -350,8 +350,13 @@
             <td class="in-meta">${e.cited ? 'CITED AS EVIDENCE' : ''}</td>
           </tr>`).join('')}
       </table></div>
-      <p class="sig-note">${nCited} of ${episodes.length} crossings shown here are the ones usually cited.
-        ${settled.length ? `${settled.filter((e) => e.dd6m > -10).length} of ${settled.length} settled crossings were not followed by a 10% drawdown within six months.` : ''}
+      <p class="sig-note">${nCited} of the ${episodes.length} crossings in view are the ones usually cited${episodes.length > nCited ? '; the rest reached the same threshold and are not quoted' : ''}.
+        ${settled.length ? (() => {
+          const fp = settled.filter((e) => e.dd6m > -10).length;
+          return fp
+            ? `${fp} of ${settled.length} settled crossings in view went on to no 10% drawdown within six months.`
+            : `All ${settled.length} settled crossings in view were followed by a drawdown of at least 10% within six months — see the full record in the parameter sweep below, where most were not.`;
+        })() : ''}
         Green is a rise, red a fall — no directional claim is being made about what a crossing implies.</p>` : '';
     box.innerHTML = `
       <div class="chart-key-head">
@@ -808,7 +813,7 @@
     // three grids over the same axes: what the cell says, how often it
     // fires, and how often it fires into nothing
     const grids = [
-      { key: 'med3m', label: 'MEDIAN S&P 3-MONTH RETURN AFTER A CROSSING', fmt: (c) => c.med3m === null ? '' : c.med3m.toFixed(1), tone: (c) => c.med3m === null ? null : -c.med3m / 6 },
+      { key: 'med3m', label: 'MEDIAN S&P 3-MONTH RETURN AFTER A CROSSING, %', fmt: (c) => c.med3m === null ? '' : c.med3m.toFixed(1), tone: (c) => c.med3m === null ? null : -c.med3m / 6 },
       { key: 'crossings', label: 'CROSSINGS IN THE FULL RECORD', fmt: (c) => String(c.crossings), tone: () => null },
       { key: 'fp10', label: 'FALSE POSITIVES — CROSSINGS WITH NO 10% DRAWDOWN IN 6M', fmt: (c) => c.fp10 === null ? '' : `${c.fp10}/${c.evaluated}`, tone: (c) => (c.fp10 === null || !c.evaluated) ? null : c.fp10 / c.evaluated },
     ];
