@@ -852,12 +852,27 @@
         <td>${o.rho === null ? '—' : o.rho.toFixed(2)}</td>
         <td class="in-meta">${o.rho === null ? 'insufficient overlap' : Math.abs(o.rho) >= 0.7 ? 'REDUNDANT' : 'independent'}</td></tr>`).join('')}`;
 
+    const rl = s.erpLink;
     $('sweep-erp-note').innerHTML = `The impulse is genuinely independent of the real-yield level already feeding PRESSURE
       (ρ=${s.overlap[0]?.rho ?? '—'}), but independent is not the same as predictive, and only the second of those earns a weight.
       It is not independent of the <b>valuation</b> layer by construction: a rising real yield raises the discount rate in
-      Damodaran's implied ERP, mechanically compressing the ERP for a given price and cash-flow path. Read the ERP move
-      through the decomposition bar on that tile — a compression driven by the RATES leg is this same impulse arriving in
-      ALTITUDE, and counting it twice would be double-counting one fact.`;
+      Damodaran's implied ERP, mechanically compressing the ERP for a given price and cash-flow path, so counting both
+      would be counting one fact twice.`;
+
+    const erpHost = $('sweep-erp-link');
+    if (!rl) { erpHost.hidden = true; } else {
+      erpHost.hidden = false;
+      const chip = rl.agrees === null ? '' : rl.agrees === false ? 'bad' : 'good';
+      erpHost.innerHTML = `
+        <h4>IS THE ERP RESPONDING? — ${rl.months}-MONTH CHANGE, BOTH SIDES OF THE DISCOUNT-RATE CHANNEL</h4>
+        <div class="el-row">
+          <span class="el-stat"><b>${rl.impulseChange === null ? '—' : (rl.impulseChange > 0 ? '+' : '') + rl.impulseChange.toFixed(0) + 'bp'}</b><i>real-yield impulse</i></span>
+          <span class="el-stat"><b>${rl.erpChange === null ? '—' : (rl.erpChange > 0 ? '+' : '') + rl.erpChange.toFixed(2) + 'pp'}</b><i>implied ERP</i></span>
+          <span class="el-stat"><b>${rl.rfChange === null ? '—' : (rl.rfChange > 0 ? '+' : '') + rl.rfChange.toFixed(2) + 'pp'}</b><i>risk-free rate used</i></span>
+          <span class="el-stat"><b>${rl.rho === null ? '—' : rl.rho.toFixed(2)}</b><i>ρ over the full record</i></span>
+        </div>
+        <p class="el-note" data-tone="${chip}">${rl.agrees === false ? '▲ ' : ''}${escapeHtml(rl.note)}</p>`;
+    }
   }
 
   const sgn = (v) => v === null || v === undefined ? '—' : `${v > 0 ? '+' : ''}${v}%`;
@@ -1040,11 +1055,13 @@
 
     // correlation matrix — compact heat table, flagged pairs in signal red
     const { ids, matrix } = diag.corr;
+    const obs = new Set(diag.corr.observed ?? []);
     const flaggedSet = new Set(diag.corr.flagged.flatMap((f) => [`${f.a}|${f.b}`, `${f.b}|${f.a}`]));
     const short = (id) => id.length > 10 ? id.slice(0, 10) : id;
+    const nm = (id) => obs.has(id) ? `${short(id)}°` : short(id);
     $('corr-matrix').innerHTML = `
-      <tr><th></th>${ids.map((id) => `<th class="vert"><span>${short(id)}</span></th>`).join('')}</tr>
-      ${ids.map((a, i) => `<tr><th>${short(a)}</th>${ids.map((b, j) => {
+      <tr><th></th>${ids.map((id) => `<th class="vert ${obs.has(id) ? 'corr-obs' : ''}"><span>${nm(id)}</span></th>`).join('')}</tr>
+      ${ids.map((a, i) => `<tr class="${obs.has(a) ? 'corr-obs-row' : ''}"><th>${nm(a)}</th>${ids.map((b, j) => {
         const r = matrix[i][j];
         if (i === j) return '<td class="diag-self">·</td>';
         if (r === null) return '<td>—</td>';
@@ -1052,9 +1069,10 @@
         const shade = Math.round(Math.abs(r) * 60);
         return `<td class="${flag ? 'corr-flag' : ''}" style="background:rgba(23,25,28,0.${String(shade).padStart(2, '0')})">${(r).toFixed(1).replace('0.', '.')}</td>`;
       }).join('')}</tr>`).join('')}`;
-    $('corr-flagged').innerHTML = diag.corr.flagged.length
+    $('corr-flagged').innerHTML = (diag.corr.flagged.length
       ? 'FLAGGED: ' + diag.corr.flagged.map((f) => `${kpiLabel(f.a)} × ${kpiLabel(f.b)} ρ=${f.r.toFixed(2)}`).join(' · ')
-      : 'no pair above 0.7';
+      : 'no pair above 0.7')
+      + (obs.size ? `<br>° carried for comparison only, no weight in either layer: ${[...obs].map(kpiLabel).join(', ')}` : '');
 
     $('loo-table').innerHTML = `
       <tr><th>INPUT</th><th>LAYER</th><th>% DAYS CHANGED</th><th>SCORE Δ NOW</th></tr>

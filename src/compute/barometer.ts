@@ -112,7 +112,11 @@ export interface ChangeRow {
 
 export interface Diagnostics {
   /** Pairwise correlation of all z-scored inputs over the backtest window. */
-  corr: { ids: string[]; matrix: (number | null)[][]; flagged: { a: string; b: string; r: number }[] };
+  corr: {
+    ids: string[]; matrix: (number | null)[][]; flagged: { a: string; b: string; r: number }[];
+    /** ids present for comparison only — carried, not weighted. */
+    observed: string[];
+  };
   /** Leave-one-out: how much the layer's regime history changes without
    *  each input. Small numbers mean the input is decorative. */
   loo: { id: string; layer: LayerId; pctDaysChanged: number; scoreDelta: number | null }[];
@@ -348,8 +352,28 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   }
 
   // ── diagnostics ──────────────────────────────────────────────────────
-  // correlation matrix of all inputs' 5y-window z-series
-  const ids = members.map((m) => m.id);
+  // Correlation matrix of all inputs' 5y-window z-series, plus any series
+  // flagged `correlate` — carried as observations with no weight. A tile
+  // excluded from the signal still has to answer whether it is simply
+  // re-expressing something the signal already reads, and the matrix is
+  // where that question gets answered. They are appended after the
+  // weighted inputs and never enter a layer, the leave-one-out, or the
+  // analogue z-vector.
+  const observed = KPIS.filter((k) => !k.subIndex && k.correlate);
+  for (const def of observed) {
+    const pts = seriesMap.get(def.id) ?? [];
+    const z5 = rollingZScore(pts, Z_WINDOWS['5y'][def.freq ?? 'daily']);
+    const cap = FFILL_CAP[def.freq ?? 'daily'];
+    const map = new Map<string, number>();
+    let i = 0, last: Point | null = null;
+    for (const date of dates) {
+      while (i < z5.length && z5[i].date <= date) { last = z5[i]; i++; }
+      if (last && last.date >= isoDaysAgo(date, cap)) map.set(date, last.value);
+    }
+    zByInput.set(def.id, { def, byWindow: { '2y': map, '5y': map } });
+  }
+
+  const ids = [...members.map((m) => m.id), ...observed.map((o) => o.id)];
   const matrix: (number | null)[][] = ids.map(() => ids.map(() => null));
   const flagged: Diagnostics['corr']['flagged'] = [];
   for (let a = 0; a < ids.length; a++) {
@@ -418,7 +442,7 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
 
   const analogues = findAnalogues(dates, zsets, seriesMap.get('spx') ?? []);
 
-  return { detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged }, loo, divergenceEpisodes } };
+  return { detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged, observed: observed.map((o) => o.id) }, loo, divergenceEpisodes } };
 }
 
 /** Everything behind the gauge face for one (layer, window). */

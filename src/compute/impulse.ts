@@ -62,6 +62,20 @@ export interface ImpulseSweep {
   };
   /** is the impulse just re-expressing what the level already says? */
   overlap: { a: string; b: string; rho: number | null }[];
+  /** The mechanical link to Damodaran's implied ERP, and whether it is
+   *  currently holding. A rising real yield raises the risk-free rate and
+   *  compresses the ERP for a given price and cash-flow path, so the two
+   *  should move opposite. When they don't, one of them is carrying
+   *  information the other isn't — that is the thing worth surfacing. */
+  erpLink: {
+    months: number;
+    impulseChange: number | null;   // bp
+    erpChange: number | null;       // percentage points
+    rfChange: number | null;        // pp — the direct channel
+    rho: number | null;             // full-history, impulse vs ERP
+    agrees: boolean | null;         // did they move opposite, as expected?
+    note: string;
+  } | null;
   computedAt: string;
 }
 
@@ -186,7 +200,7 @@ export function computeImpulseSweep(m: Map<string, Point[]>): ImpulseSweep | nul
   ];
 
   return {
-    cells, published, crossings,
+    cells, published, crossings, erpLink: erpLink(pubImp, m),
     verdict: {
       negativeCells, totalCells: cells.length,
       publishedMed3m: published?.med3m ?? null,
@@ -201,6 +215,78 @@ export function computeImpulseSweep(m: Map<string, Point[]>): ImpulseSweep | nul
     computedAt: new Date().toISOString(),
   };
 }
+
+const ERP_LINK_MONTHS = 6;
+
+/** Change over `days` ending at the series' last observation. */
+function changeOverDays(pts: Point[], days: number): number | null {
+  if (pts.length < 2) return null;
+  const end = pts[pts.length - 1];
+  const from = isoDaysAgo(end.date, days);
+  let start: Point | null = null;
+  for (const p of pts) { if (p.date > from) break; start = p; }
+  if (!start || start.date >= end.date) return null;
+  return end.value - start.value;
+}
+
+function erpLink(imp: Point[], m: Map<string, Point[]>): ImpulseSweep['erpLink'] {
+  const erp = m.get('erp') ?? [];
+  const rf = m.get('erp_rf') ?? [];
+  if (!imp.length || !erp.length) return null;
+  const days = Math.round(ERP_LINK_MONTHS * 30.44);
+  const di = changeOverDays(imp, days);
+  const de = changeOverDays(erp, days);
+  const dr = changeOverDays(rf, days);
+  // The ERP is monthly and the impulse daily, so an exact-date join finds
+  // almost nothing. Sample the impulse as-of each ERP observation instead.
+  const rho = pearson(sampleAsOf(imp, erp), erp);
+
+  // Expected: impulse up → ERP down. Both flat is neither agreement nor
+  // divergence, so it reads as neither.
+  const IMP_MIN = 15;  // bp — below this the impulse has not "fired"
+  const ERP_MIN = 0.1; // pp
+  let agrees: boolean | null = null;
+  let note: string;
+  if (di === null || de === null) {
+    note = 'not enough overlapping history to check the link.';
+  } else if (Math.abs(di) < IMP_MIN) {
+    note = `the impulse has moved only ${fmtBp(di)} over ${ERP_LINK_MONTHS} months — too little to expect a visible ERP response.`;
+  } else if (Math.abs(de) < ERP_MIN) {
+    agrees = false;
+    note = `the impulse moved ${fmtBp(di)} over ${ERP_LINK_MONTHS} months while the implied ERP barely moved (${fmtPp(de)}). `
+      + `The discount-rate channel is not showing up in the ERP: either price and cash-flow moves are offsetting it, or one of the two is carrying information the other is not.`;
+  } else {
+    agrees = (di > 0) !== (de > 0);
+    note = agrees
+      ? `the impulse ${di > 0 ? 'rose' : 'fell'} ${fmtBp(di)} over ${ERP_LINK_MONTHS} months and the implied ERP moved the opposite way (${fmtPp(de)}), which is the mechanical response — the impulse is arriving in ALTITUDE through valuation, not adding independent news.`
+      : `DIVERGENCE — the impulse ${di > 0 ? 'rose' : 'fell'} ${fmtBp(di)} over ${ERP_LINK_MONTHS} months and the implied ERP moved the SAME way (${fmtPp(de)}), against the discount-rate mechanism. Something other than rates is driving the ERP: check the decomposition bar on that tile for whether it is the index or the cash-flow leg.`;
+  }
+  if (dr !== null) note += ` Risk-free rate used by Damodaran over the same window: ${fmtPp(dr)}.`;
+  // The mechanism is real but it is one term among several, and the record
+  // says so: read the current reading against that, not against a link the
+  // data does not actually show as tight.
+  if (rho !== null && Math.abs(rho) < 0.3) {
+    note += ` Over the full record the two are only ρ=${rho.toFixed(2)} — the discount-rate channel is one term in the ERP among several, so a period where they disagree is common rather than remarkable.`;
+  }
+
+  return { months: ERP_LINK_MONTHS, impulseChange: di === null ? null : r2(di), erpChange: de === null ? null : r2(de), rfChange: dr === null ? null : r2(dr), rho, agrees, note };
+}
+
+/** `src` sampled at each date in `at`, taking the last value on or before
+ *  it. Dates with no prior observation are dropped. */
+function sampleAsOf(src: Point[], at: Point[]): Point[] {
+  const out: Point[] = [];
+  let i = 0;
+  let last: Point | null = null;
+  for (const target of at) {
+    while (i < src.length && src[i].date <= target.date) { last = src[i]; i++; }
+    if (last) out.push({ date: target.date, value: last.value });
+  }
+  return out;
+}
+
+const fmtBp = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(0)}bp`;
+const fmtPp = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}pp`;
 
 function buildSummary(pub: SweepCell | null, neg: number, total: number, nCited: number, nOther: number): string {
   if (!pub) return 'sweep incomplete';

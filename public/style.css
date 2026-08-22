@@ -584,6 +584,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 #corr-matrix td { padding: 1px 2px; text-align: right; min-width: 22px; border: 1px solid var(--ground); }
 #corr-matrix td.corr-flag { color: var(--down); font-weight: 700; outline: 1px solid var(--down); }
 #corr-matrix td.diag-self { color: var(--rule); }
+#corr-matrix th.corr-obs, #corr-matrix tr.corr-obs-row > th { font-style: italic; color: var(--ink); }
 .corr-flagged { font-family: var(--font-num); font-size: 10px; color: var(--muted); margin-top: 4px; }
 .corr-flagged:empty { display: none; }
 #loo-table, #div-table { border-collapse: collapse; font-family: var(--font-num); font-size: 11px; width: 100%; }
@@ -756,6 +757,20 @@ table.sig-inputs { border-collapse: collapse; width: 100%; font-family: var(--fo
 #sweep-crossings td.down, #sweep-overlap td.down { color: var(--down); }
 #sweep-crossings td.pending { color: var(--rule); }
 .corr-flag-row td { color: var(--down); font-weight: 700; }
+
+.sweep-erp-link { margin-top: 10px; }
+.el-row { display: flex; flex-wrap: wrap; gap: 22px; margin: 4px 0 6px; }
+.el-stat { display: flex; flex-direction: column; }
+.el-stat b { font-family: var(--font-num); font-size: 16px; line-height: 1.1; }
+.el-stat i {
+  font-family: var(--font-label); font-style: normal; font-size: 9.5px;
+  letter-spacing: 0.09em; color: var(--muted); margin-top: 2px;
+}
+.el-note { font-size: 11.5px; line-height: 1.45; max-width: 100ch; color: var(--muted); }
+.el-note[data-tone="bad"] {
+  color: var(--ink); font-weight: 600;
+  border-left: 3px solid var(--down); background: rgba(220, 73, 86, 0.08); padding: 5px 9px;
+}
 
 @media (max-width: 900px) {
   .sweep-two { grid-template-columns: 1fr; }

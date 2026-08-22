@@ -102,6 +102,10 @@ export interface KpiDef {
   /** Named horizontal levels → cron computes a state flag for the tile,
    *  e.g. IGV vs the head-and-shoulders shoulder/top. */
   flagLevels?: { shoulder: number; top: number };
+  /** Include in the Phase 2 correlation matrix WITHOUT giving it a weight.
+   *  For a tile carried as an observation: the reader still needs to see
+   *  whether it is re-expressing something already in the signal. */
+  correlate?: boolean;
   /** Ordered ascending bands → discrete state flag plus days held in it.
    *  The highest band whose `atLeast` is met wins. */
   stateBands?: { atLeast: number; label: string }[];
@@ -235,6 +239,7 @@ export const KPIS: KpiDef[] = [
     stressSign: 1,
     signRationale: 'Rise in the 10Y real yield from its own 18-month trough. A fast rise tightens conditions and compresses long-duration valuations — the AI complex most of all. Velocity from trough, not level. NOT in PRESSURE: the parameter sweep does not support the published 75bp threshold.',
     derive: { type: 'trough_impulse', input: 'us10y_real', months: 18, scale: 100 },
+    correlate: true, // in the matrix, not in the weights
     stateBands: [
       { atLeast: 0, label: 'BELOW' },
       { atLeast: 50, label: 'APPROACHING' },
