@@ -32,8 +32,12 @@ export interface Env {
 const REFETCH_DAYS = 45;
 const CHART_MAX_POINTS = 780;
 const BARO_CHART_MAX = 1560; // backtest chart resolution (both layers)
-/** Truncated histories are re-fetched in full at most this many per run. */
-const DEEP_BACKFILLS_PER_RUN = 8;
+/** Truncated histories are re-fetched in full at most this many per run.
+ *  Kept small: a deep fetch is a much larger response than the routine
+ *  45-day window, and a run that tries too many at once competes with the
+ *  ordinary refresh for the same subrequest and CPU budget. Healing a few
+ *  per hour is invisible; a run that dies healing all of them is not. */
+const DEEP_BACKFILLS_PER_RUN = 4;
 
 interface FetchOutcome {
   points: Point[];

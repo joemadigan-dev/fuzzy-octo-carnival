@@ -9,6 +9,13 @@ import type { DataSource, FetchOpts, Point, SourceEnv } from './types.ts';
 const API = 'https://api.stlouisfed.org/fred/series/observations';
 const CSV = 'https://fred.stlouisfed.org/graph/fredgraph.csv';
 
+/** Thrown when the API failed for a reason the keyless endpoint would hit
+ *  too — both are the same origin, so retrying it costs a subrequest and
+ *  buys nothing. Worker invocations have a hard subrequest cap, and during
+ *  a FRED outage a blind second attempt per series is what exhausts it and
+ *  takes down unrelated tiles that had nothing to do with FRED. */
+class UpstreamDown extends Error {}
+
 async function fetchViaApi(seriesId: string, opts: FetchOpts, key: string): Promise<Point[]> {
   const url = new URL(API);
   url.searchParams.set('series_id', seriesId);
@@ -17,6 +24,7 @@ async function fetchViaApi(seriesId: string, opts: FetchOpts, key: string): Prom
   if (opts.from) url.searchParams.set('observation_start', opts.from);
   if (opts.to) url.searchParams.set('observation_end', opts.to);
   const res = await fetch(url.toString(), { headers: { accept: 'application/json' } });
+  if (res.status >= 500) throw new UpstreamDown(`FRED API ${res.status} for ${seriesId}`);
   if (!res.ok) throw new Error(`FRED API ${res.status} for ${seriesId}`);
   const body = (await res.json()) as { observations?: { date: string; value: string }[] };
   if (!body.observations) throw new Error(`FRED API: no observations for ${seriesId}`);
@@ -66,8 +74,18 @@ export const fred: DataSource = {
     if (env.FRED_API_KEY) {
       try {
         return await fetchViaApi(seriesId, opts, env.FRED_API_KEY);
-      } catch {
-        // fall through to keyless endpoint — same data
+      } catch (e) {
+        // A 5xx means FRED itself is unwell; the keyless endpoint sits
+        // behind the same origin and would fail identically, so report the
+        // real cause rather than spending a second subrequest to rediscover
+        // it. Anything else (bad key, rate limit, parse) is worth retrying
+        // keylessly — it is genuinely a different path to the same data.
+        if (e instanceof UpstreamDown) throw e;
+        try {
+          return await fetchViaCsv(seriesId, opts);
+        } catch (csvErr) {
+          throw new Error(`${csvErr instanceof Error ? csvErr.message : csvErr} (API first failed: ${e instanceof Error ? e.message : e})`);
+        }
       }
     }
     return fetchViaCsv(seriesId, opts);
