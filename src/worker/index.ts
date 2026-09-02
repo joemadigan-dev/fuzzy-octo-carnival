@@ -37,12 +37,30 @@ export default {
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
 
+    // An unhandled throw here reaches the browser as Cloudflare's error
+    // 1101 — an opaque page with a blank wall behind it and no way for a
+    // reader to tell a broken deploy from an exhausted database quota. The
+    // failure gets named instead, so the page can say what is wrong.
     let res: Response;
-    if (path === '/api/wall') res = await apiWall(env);
-    else if (path === '/api/barometer') res = await apiBarometer(env);
-    else if (path === '/api/alerts') res = await apiAlerts(env);
-    else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
-    else res = json({ error: 'not found' }, 404);
+    try {
+      if (path === '/api/wall') res = await apiWall(env);
+      else if (path === '/api/barometer') res = await apiBarometer(env);
+      else if (path === '/api/alerts') res = await apiAlerts(env);
+      else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
+      else res = json({ error: 'not found' }, 404);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const quota = /daily row (read|write) limit|exceeded .*free tier/i.test(msg);
+      return noStore({
+        error: quota ? 'database quota exhausted' : 'database unavailable',
+        detail: msg,
+        // the free-tier caps reset at midnight UTC; say so rather than
+        // leaving a reader to guess whether this is permanent
+        retryAfter: quota ? new Date(Date.UTC(
+          new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1,
+        )).toISOString() : null,
+      }, 503);
+    }
 
     if (res.status === 200) ctx.waitUntil(cache.put(cacheKey, res.clone()));
     return res;
@@ -300,9 +318,13 @@ async function adminRefresh(req: Request, env: Env, ctx: ExecutionContext): Prom
   try {
     // Heavy spreadsheet parses are cron-only by default: a fetch handler
     // does not have the CPU budget and would fail with 1102 mid-run.
-    const allowHeavy = new URL(req.url).searchParams.get('heavy') === '1';
-    const log = await runScheduled(env, Date.now(), { allowHeavy });
-    return json({ ok: true, allowHeavy, log: log.split('\n') });
+    const params = new URL(req.url).searchParams;
+    const allowHeavy = params.get('heavy') === '1';
+    // ?force=1 rebuilds the computed layer even when no source advanced,
+    // which a routine run now skips to stay inside D1's daily read budget.
+    const force = params.get('force') === '1';
+    const log = await runScheduled(env, Date.now(), { allowHeavy, force });
+    return json({ ok: true, allowHeavy, force, log: log.split('\n') });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
   }

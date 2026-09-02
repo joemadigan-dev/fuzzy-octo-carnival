@@ -42,6 +42,10 @@ const DEEP_BACKFILLS_PER_RUN = 4;
  *  comfortably exceed REFETCH_DAYS, since a revision to an input inside
  *  that window is the only thing that can change an older derived value. */
 const DERIVED_WRITE_DAYS = 120;
+/** Longest the computed layer may go without a rebuild, however quiet the
+ *  sources are. Bounds the staleness that skipping the heavy path can
+ *  introduce, and guarantees input revisions are eventually picked up. */
+const HEAVY_MAX_IDLE_HOURS = 8;
 
 interface FetchOutcome {
   points: Point[];
@@ -53,6 +57,8 @@ export interface RunOpts {
   /** Allow CPU-expensive spreadsheet parses. True on the cron path (~30s
    *  CPU); false from a fetch handler, which would exceed its budget. */
   allowHeavy?: boolean;
+  /** Run the load/derive/barometer path even when no series advanced. */
+  force?: boolean;
 }
 
 export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: RunOpts = {}): Promise<string> {
@@ -88,6 +94,11 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
 
   // ── 1. fetch + upsert each sourced series ────────────────────────────
   let deepBudget = DEEP_BACKFILLS_PER_RUN;
+  // Did ANY series gain an observation this run? Everything after the
+  // fetch — loading full histories, recomputing 34 derivations, the
+  // barometer — is pure waste when nothing new arrived, and on the free
+  // tier it is waste that costs the whole day's D1 read allowance.
+  let advanced: string | null = null;
   const outcomes = new Map<string, FetchOutcome>();
   await Promise.all(fetched.map(async (kpi) => {
     try {
@@ -151,6 +162,9 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
         via = `${kpi.fallback.source} (fallback; ${kpi.source} failed: ${primaryErr instanceof Error ? primaryErr.message : primaryErr})`;
       }
       if (kpi.fetchScale) pts = pts.map((p) => ({ date: p.date, value: p.value * kpi.fetchScale! }));
+      if (pts.length && (!maxRow?.d || pts[pts.length - 1].date > maxRow.d)) {
+        advanced ??= `${kpi.id} → ${pts[pts.length - 1].date}`;
+      }
       await upsertObservations(env.DB, kpi.id, pts);
       if (kpi.fetchIntervalDays) {
         await env.DB.prepare(
@@ -171,6 +185,35 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   }));
 
   mark('fetch');
+
+  // ── 1b. is the rest of this run worth doing? ─────────────────────────
+  // Loading every history, recomputing all 34 derivations and rebuilding
+  // the barometer costs ~143k D1 row reads. The cron fires hourly but the
+  // sources publish daily, so on ~22 runs out of 24 that work reproduces
+  // byte-identical output — and 24 x 143k is 3.4M reads against a 5M free
+  // daily cap, which is what took the wall down. So the heavy path runs
+  // only when a series actually gained an observation.
+  //
+  // A floor guarantees it still runs: revisions change a value without
+  // advancing its date, and the barometer's own reading rolls forward with
+  // the calendar even when no input moves. HEAVY_MAX_IDLE_HOURS bounds how
+  // stale the computed layer can get regardless of what the sources do.
+  const lastHeavyRow = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_heavy'")
+    .first<{ value: string }>();
+  const idleHours = lastHeavyRow?.value
+    ? (nowMs - Date.parse(lastHeavyRow.value)) / 3600000
+    : Infinity;
+  const forced = opts.force || idleHours >= HEAVY_MAX_IDLE_HOURS;
+  if (!advanced && !forced) {
+    log.push(`no series advanced (last heavy run ${idleHours.toFixed(1)}h ago) — skipping load/derive/barometer`);
+    mark('skipped heavy path');
+    await env.DB.prepare(
+      `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    ).bind(nowIso).run();
+    await saveProgress(true);
+    return log.join('\n');
+  }
+  log.push(advanced ? `advanced: ${advanced} — running heavy path` : `forced heavy path (idle ${idleHours.toFixed(1)}h)`);
 
   // ── 2. load full history for every sourced series ────────────────────
   const seriesMap = new Map<string, Point[]>();
@@ -473,6 +516,9 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  ).bind(nowIso).run();
+  await env.DB.prepare(
+    `INSERT INTO meta (key, value) VALUES ('last_heavy', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
   ).bind(nowIso).run();
   await saveProgress(true);
 

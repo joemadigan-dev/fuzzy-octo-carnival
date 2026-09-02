@@ -229,6 +229,7 @@
     const tileAt = (wall?.kpis ?? []).reduce((m, k) => (k.computedAt && k.computedAt > m ? k.computedAt : m), '');
     const lagH = baroAt && tileAt ? (Date.parse(tileAt) - baroAt) / 3600000 : 0;
     const warn = $('run-warn');
+    if (warn.dataset.outage === '1') return; // an outage banner outranks these
     if (rl && rl.done === false) {
       warn.hidden = false;
       warn.innerHTML = `⚠ THE LAST SCHEDULED RUN DID NOT FINISH — it was cut off after
@@ -444,8 +445,17 @@
   async function poll(initial = false) {
     try {
       const res = await fetch('/api/wall', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`wall fetch ${res.status}`);
+      if (!res.ok) {
+        // A wall with no tiles and no explanation is the worst possible
+        // failure mode for an instrument: it reads as "nothing is
+        // happening" when it means "I cannot see". Say which one it is.
+        let body = null;
+        try { body = await res.json(); } catch { /* not our JSON */ }
+        showOutage(body, res.status);
+        throw new Error(`wall fetch ${res.status}`);
+      }
       const next = await res.json();
+      $('run-warn').dataset.outage = '';
       const prev = wall;
       wall = next;
       if (initial || !prev) { render(); return; }
@@ -475,6 +485,23 @@
     } catch {
       $('last-run').textContent = `poll failed ${new Date().toISOString().slice(11, 16)}Z`;
     }
+  }
+
+  /** Banner shown when the API cannot serve. Kept above the wall and
+   *  sticky, because the tiles below it are either absent or frozen at
+   *  whatever the last good poll returned. */
+  function showOutage(body, status) {
+    const warn = $('run-warn');
+    warn.hidden = false;
+    warn.dataset.outage = '1';
+    const until = body?.retryAfter
+      ? new Date(body.retryAfter).toISOString().slice(0, 16).replace('T', ' ') + 'Z'
+      : null;
+    warn.innerHTML = body?.error === 'database quota exhausted'
+      ? `⚠ <b>THE WALL CANNOT READ ITS DATABASE.</b> The daily storage quota is spent, so no reading below is current
+         — treat the whole page as stale, not as calm.${until ? ` The quota resets at <b>${until}</b>.` : ''}`
+      : `⚠ <b>THE WALL CANNOT REACH ITS DATABASE</b> (HTTP ${status}). Nothing below is current.
+         ${escapeHtml(String(body?.detail ?? '').slice(0, 200))}`;
   }
 
   // ── timeframe toggle: whole wall flips as one event ──────────────────

@@ -681,6 +681,13 @@ table.sig-inputs { border-collapse: collapse; width: 100%; font-family: var(--fo
   padding: 5px 16px; border-bottom: 1px solid var(--rule);
   background: rgba(220, 73, 86, 0.1); color: var(--ink);
 }
+/* a full outage outranks a stale-stage note: it must stay on screen */
+.run-warn[data-outage="1"] {
+  position: sticky; top: 0; z-index: 40;
+  font-size: 12.5px; padding: 9px 16px;
+  background: var(--down-fill); color: var(--fill-ink);
+  border-bottom: 2px solid var(--down);
+}
 
 /* ── chart key + episode markers under an expanded tile chart ────────── */
 
