@@ -46,6 +46,14 @@ const DERIVED_WRITE_DAYS = 120;
  *  sources are. Bounds the staleness that skipping the heavy path can
  *  introduce, and guarantees input revisions are eventually picked up. */
 const HEAVY_MAX_IDLE_HOURS = 8;
+/** Minimum gap between heavy runs. "A series advanced" is not by itself a
+ *  bound: the ~44 sources publish at different times of day, so on a busy
+ *  weekday a dozen separate advances could each trigger a full rebuild and
+ *  put us back where we started. This caps heavy runs at 12/day (~1.7M
+ *  reads against a 5M free cap) whatever the publication pattern does. The
+ *  cost is that new data can wait up to this long to appear — cheap, for
+ *  sources that publish once a day. */
+const HEAVY_MIN_GAP_HOURS = 2;
 
 interface FetchOutcome {
   points: Point[];
@@ -198,14 +206,30 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // advancing its date, and the barometer's own reading rolls forward with
   // the calendar even when no input moves. HEAVY_MAX_IDLE_HOURS bounds how
   // stale the computed layer can get regardless of what the sources do.
-  const lastHeavyRow = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_heavy'")
-    .first<{ value: string }>();
+  const [lastHeavyRow, pendingRow] = await Promise.all([
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'last_heavy'").first<{ value: string }>(),
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'heavy_pending'").first<{ value: string }>(),
+  ]);
   const idleHours = lastHeavyRow?.value
     ? (nowMs - Date.parse(lastHeavyRow.value)) / 3600000
     : Infinity;
+  // An advance that arrived during the minimum gap is remembered rather
+  // than dropped: its rows are already upserted, so a later run would not
+  // see them as new and the rebuild would wait for the idle floor instead.
+  const heavyPending = pendingRow?.value === '1';
+  const wants = Boolean(advanced) || heavyPending;
   const forced = opts.force || idleHours >= HEAVY_MAX_IDLE_HOURS;
-  if (!advanced && !forced) {
-    log.push(`no series advanced (last heavy run ${idleHours.toFixed(1)}h ago) — skipping load/derive/barometer`);
+  const tooSoon = idleHours < HEAVY_MIN_GAP_HOURS;
+
+  if (!forced && (!wants || tooSoon)) {
+    if (advanced && !heavyPending) {
+      await env.DB.prepare(
+        "INSERT INTO meta (key, value) VALUES ('heavy_pending','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      ).run();
+    }
+    log.push(wants
+      ? `${advanced ?? 'a pending advance'} is waiting but the last heavy run was ${idleHours.toFixed(1)}h ago (min gap ${HEAVY_MIN_GAP_HOURS}h) — deferring`
+      : `no series advanced (last heavy run ${idleHours.toFixed(1)}h ago) — skipping load/derive/barometer`);
     mark('skipped heavy path');
     await env.DB.prepare(
       `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
@@ -213,7 +237,9 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     await saveProgress(true);
     return log.join('\n');
   }
-  log.push(advanced ? `advanced: ${advanced} — running heavy path` : `forced heavy path (idle ${idleHours.toFixed(1)}h)`);
+  log.push(wants
+    ? `${advanced ?? 'pending advance'} — running heavy path (idle ${idleHours.toFixed(1)}h)`
+    : `forced heavy path (idle ${idleHours.toFixed(1)}h)`);
 
   // Stamped on ATTEMPT, not on success. A heavy run that dies part-way has
   // already spent most of its ~143k reads, so retrying it every hour is
@@ -221,9 +247,14 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // condition that causes the failure. Moving the stamp here makes the
   // idle floor govern retries too, bounding a broken heavy path to a few
   // attempts a day instead of twenty-four.
-  await env.DB.prepare(
-    `INSERT INTO meta (key, value) VALUES ('last_heavy', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-  ).bind(nowIso).run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO meta (key, value) VALUES ('last_heavy', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    ).bind(nowIso),
+    env.DB.prepare(
+      "INSERT INTO meta (key, value) VALUES ('heavy_pending','0') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    ),
+  ]);
 
   // ── 2. load full history for every sourced series ────────────────────
   const seriesMap = new Map<string, Point[]>();
