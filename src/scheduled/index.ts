@@ -38,6 +38,10 @@ const BARO_CHART_MAX = 1560; // backtest chart resolution (both layers)
  *  ordinary refresh for the same subrequest and CPU budget. Healing a few
  *  per hour is invisible; a run that dies healing all of them is not. */
 const DEEP_BACKFILLS_PER_RUN = 4;
+/** Trailing window of a derived series rewritten on a routine run. Must
+ *  comfortably exceed REFETCH_DAYS, since a revision to an input inside
+ *  that window is the only thing that can change an older derived value. */
+const DERIVED_WRITE_DAYS = 120;
 
 interface FetchOutcome {
   points: Point[];
@@ -180,6 +184,20 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
 
   // ── 3. compute + upsert derived series (multi-pass: derived KPIs may
   //       consume other derived KPIs, e.g. breadth = roc(rsp/spy)) ──────
+  // One small read of every derived series' stored shape (count|earliest),
+  // so the loop below never has to COUNT over `observations` to decide how
+  // much to write. `meta` is tiny; this is ~34 rows against the ~146k the
+  // equivalent COUNTs would scan.
+  const derivedShape = new Map<string, { n: number; min: string }>();
+  {
+    const rows = await env.DB.prepare("SELECT key, value FROM meta WHERE key LIKE 'derived:%'")
+      .all<{ key: string; value: string }>();
+    for (const r of rows.results ?? []) {
+      const [n, min] = r.value.split('|');
+      if (min) derivedShape.set(r.key.slice(8), { n: Number(n), min });
+    }
+  }
+
   const pending = new Set(derived.map((k) => k.id));
   for (let pass = 0; pass < 4 && pending.size; pass++) {
     for (const kpi of derived) {
@@ -191,16 +209,55 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       const failedInput = inputIds.find((id) => outcomes.get(id) && !outcomes.get(id)!.ok);
       try {
         const pts = computeDerived(kpi.derive!, seriesMap);
-        if (pts.length) await upsertObservations(env.DB, kpi.id, pts);
-        // reload from D1 so history persists even when an input is down today
-        const stored = await loadSeries(env.DB, kpi.id);
-        seriesMap.set(kpi.id, stored);
+
+        // A derivation recomputes its ENTIRE history from its inputs every
+        // run, and writing all of it back every hour is what put this over
+        // D1's free-tier daily caps: 34 derived series is ~146k rows per
+        // run against a 100k/day write allowance, and reloading each one
+        // afterwards cost as much again in reads. Only the tail can
+        // actually have changed — inputs are re-fetched over a 45-day
+        // window — so only the tail is written.
+        //
+        // The shape of what is stored is tracked in `meta`, NOT with a
+        // COUNT/MIN over `observations`: that query scans the whole series
+        // and would spend on reads exactly what this saves on writes. A
+        // full rewrite is triggered only when the history starts earlier
+        // than before, or grows by more than the trailing window could
+        // account for — a new series, or an input healed by the deep
+        // backfill. Routine daily growth of one observation stays inside
+        // the window and does not trigger one. (Deleting a derived series'
+        // rows out of band also needs its `derived:` meta key deleted, or
+        // the next run will believe they are still there.)
+        const fp = derivedShape.get(kpi.id);
+        const window = isoDaysAgo(today, DERIVED_WRITE_DAYS);
+        const inWindow = pts.filter((p) => p.date >= window);
+        const grew = !fp || pts.length === 0 || pts[0].date !== fp.min
+          || pts.length - fp.n > inWindow.length;
+        const toWrite = grew ? pts : inWindow;
+        if (toWrite.length) await upsertObservations(env.DB, kpi.id, toWrite);
+        if (pts.length) {
+          const shape = `${pts.length}|${pts[0].date}`;
+          if (!fp || shape !== `${fp.n}|${fp.min}`) {
+            await env.DB.prepare(
+              "INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ).bind(`derived:${kpi.id}`, shape).run();
+          }
+        }
+
+        // `pts` is computed from the inputs' full history, so when it is at
+        // least as complete as what is stored it IS the stored series and
+        // the reload is a pure waste. Reload only when the derivation came
+        // back short — an input down today — where the stored history is
+        // the more complete record.
+        const complete = pts.length > 0 && (!fp || (pts.length >= fp.n && pts[0].date <= fp.min));
+        const series = complete ? pts : await loadSeries(env.DB, kpi.id);
+        seriesMap.set(kpi.id, series);
         outcomes.set(kpi.id, {
-          points: stored,
+          points: series,
           ok: inputsPresent && !failedInput,
           error: failedInput ? `input '${failedInput}' failed to refresh` : (inputsPresent ? undefined : 'missing input series'),
         });
-        log.push(`${kpi.id}: derived ${pts.length} obs`);
+        log.push(`${kpi.id}: derived ${pts.length} obs, wrote ${toWrite.length}${grew ? ' [full — history grew]' : ''}${complete ? '' : ' [reloaded]'}`);
       } catch (e) {
         const stored = await loadSeries(env.DB, kpi.id);
         seriesMap.set(kpi.id, stored);
