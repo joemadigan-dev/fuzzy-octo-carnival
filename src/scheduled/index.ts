@@ -215,6 +215,16 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   }
   log.push(advanced ? `advanced: ${advanced} — running heavy path` : `forced heavy path (idle ${idleHours.toFixed(1)}h)`);
 
+  // Stamped on ATTEMPT, not on success. A heavy run that dies part-way has
+  // already spent most of its ~143k reads, so retrying it every hour is
+  // what pins an exhausted quota exhausted — the failure keeps causing the
+  // condition that causes the failure. Moving the stamp here makes the
+  // idle floor govern retries too, bounding a broken heavy path to a few
+  // attempts a day instead of twenty-four.
+  await env.DB.prepare(
+    `INSERT INTO meta (key, value) VALUES ('last_heavy', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  ).bind(nowIso).run();
+
   // ── 2. load full history for every sourced series ────────────────────
   const seriesMap = new Map<string, Point[]>();
   for (const kpi of fetched) {
@@ -516,9 +526,6 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-  ).bind(nowIso).run();
-  await env.DB.prepare(
-    `INSERT INTO meta (key, value) VALUES ('last_heavy', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
   ).bind(nowIso).run();
   await saveProgress(true);
 
