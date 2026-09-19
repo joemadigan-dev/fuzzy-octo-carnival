@@ -14,6 +14,11 @@ export default {
     const path = url.pathname;
 
     if (!path.startsWith('/api/')) {
+      // Extensionless routes for the two dashboards, so a bookmark never
+      // depends on Cloudflare's asset-redirect behaviour.
+      if (env.ASSETS && (path === '/tracker' || path === '/tracker/')) {
+        return env.ASSETS.fetch(new Request(new URL('/cockpit.html', url), req));
+      }
       return env.ASSETS ? env.ASSETS.fetch(req) : new Response('not found', { status: 404 });
     }
 

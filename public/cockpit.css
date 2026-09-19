@@ -1,0 +1,262 @@
+/* MELT-UP & DOOMSDAY TRACKER — dark institutional cockpit.
+   Section 20: Bloomberg-style density with modern clean layout, dark by
+   default, colour used sparingly. Green/amber/red are reserved for state;
+   everything else is greyscale so the few coloured things carry meaning. */
+
+:root {
+  --bg: #0d0f11;
+  --panel: #14171a;
+  --panel-hi: #1b1f23;
+  --rule: #272c31;
+  --ink: #e6e8ea;
+  --dim: #9aa1a8;
+  --dimmer: #6b737a;
+
+  /* State. Checked for contrast on --bg and for deuteranopia separation:
+     the amber and the green differ in lightness as well as hue, so they do
+     not collapse into each other for a red-green colour-blind reader. */
+  --ok: #35b07a;
+  --watch: #e8b33a;
+  --stress: #f0714f;
+  --crit: #e5484d;
+  --neutral: #6b737a;
+
+  --font-label: 'Barlow Semi Condensed', system-ui, sans-serif;
+  --font-num: 'Spline Sans Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-label);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+.ck-head {
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule); background: #0a0c0e;
+  position: sticky; top: 0; z-index: 50;
+}
+.ck-brand { display: flex; flex-direction: column; line-height: 1.05; }
+.ck-b1 { font-size: 15px; font-weight: 700; letter-spacing: 0.14em; }
+.ck-b2 { font-size: 10px; font-weight: 600; letter-spacing: 0.34em; color: var(--dimmer); }
+.ck-meta { margin-left: auto; display: flex; gap: 16px; align-items: baseline;
+  font-family: var(--font-num); font-size: 10.5px; color: var(--dim); }
+.ck-link { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.ck-link:hover { color: var(--ink); }
+
+.ck-outage {
+  font-family: var(--font-num); font-size: 12px; line-height: 1.5;
+  padding: 10px 16px; background: rgba(229, 72, 77, 0.14);
+  border-bottom: 2px solid var(--crit); color: var(--ink);
+}
+
+.ck-main { padding: 14px 16px 40px; max-width: 1500px; margin: 0 auto; }
+
+/* ── 1. the five cards ──────────────────────────────────────────────── */
+.ck-cards {
+  display: grid; gap: 10px; margin-bottom: 18px;
+  grid-template-columns: 1.55fr 1fr 1fr 1fr 1.25fr;
+}
+.ck-card {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 3px;
+  padding: 11px 13px 12px; min-height: 148px;
+  display: flex; flex-direction: column; position: relative; overflow: hidden;
+}
+.ck-skel { opacity: 0.4; }
+/* the state stripe is the only large colour field on the page */
+.ck-card::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--neutral);
+}
+.ck-card[data-state="NORMAL"]::before   { background: var(--ok); }
+.ck-card[data-state="WATCH"]::before    { background: var(--watch); }
+.ck-card[data-state="ELEVATED"]::before { background: var(--watch); }
+.ck-card[data-state="STRESS"]::before   { background: var(--stress); }
+.ck-card[data-state="CRITICAL"]::before { background: var(--crit); }
+
+.ck-k {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.2em;
+  color: var(--dimmer); margin-bottom: 6px;
+}
+.ck-v { font-family: var(--font-num); font-weight: 700; line-height: 1.02; }
+.ck-card .ck-v { font-size: 30px; letter-spacing: -0.02em; }
+#card-phase .ck-v { font-size: 20px; line-height: 1.12; letter-spacing: 0; }
+.ck-v .ck-den { font-size: 15px; color: var(--dimmer); font-weight: 500; }
+
+.ck-state {
+  display: inline-block; margin-top: 5px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.16em;
+}
+.ck-state[data-state="NORMAL"]   { color: var(--ok); }
+.ck-state[data-state="WATCH"],
+.ck-state[data-state="ELEVATED"] { color: var(--watch); }
+.ck-state[data-state="STRESS"]   { color: var(--stress); }
+.ck-state[data-state="CRITICAL"] { color: var(--crit); }
+
+.ck-why { font-size: 11.5px; line-height: 1.4; color: var(--dim); margin-top: 7px; }
+.ck-drivers { margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.ck-driver {
+  font-family: var(--font-num); font-size: 10.5px; color: var(--dim);
+  display: flex; gap: 6px; align-items: baseline;
+}
+.ck-driver b { color: var(--ink); font-weight: 700; min-width: 26px; }
+.ck-chip {
+  font-family: var(--font-num); font-size: 9.5px; letter-spacing: 0.06em;
+  border: 1px solid var(--rule); border-radius: 2px; padding: 1px 5px; color: var(--dim);
+  align-self: flex-start; margin-top: 5px;
+}
+.ck-chip.changed { border-color: var(--watch); color: var(--watch); }
+
+/* split bar for bust vulnerability vs onset */
+.ck-split { display: flex; gap: 8px; margin-top: 7px; font-family: var(--font-num); font-size: 10px; }
+.ck-split div { flex: 1; }
+.ck-split .lab { color: var(--dimmer); font-size: 9px; letter-spacing: 0.12em; }
+.ck-split .val { color: var(--ink); font-weight: 700; font-size: 13px; }
+.ck-bar { height: 3px; background: var(--rule); margin-top: 3px; border-radius: 2px; overflow: hidden; }
+.ck-bar i { display: block; height: 100%; background: var(--dim); }
+.ck-bar.onset i { background: var(--stress); }
+
+.ck-kv { font-family: var(--font-num); font-size: 11px; color: var(--dim);
+  display: flex; justify-content: space-between; gap: 8px; padding: 1.5px 0; }
+.ck-kv b { color: var(--ink); font-weight: 700; }
+
+/* expandable score breakdown — section 26 */
+.ck-more {
+  margin-top: 7px; background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--font-num); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--dimmer); text-align: left;
+}
+.ck-more:hover { color: var(--ink); }
+.ck-breakdown {
+  margin-top: 7px; border-top: 1px solid var(--rule); padding-top: 6px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ck-comp { font-family: var(--font-num); font-size: 10.5px; line-height: 1.35; display: flex; gap: 7px; }
+.ck-comp .d { font-weight: 700; min-width: 26px; text-align: right; color: var(--ink); }
+.ck-comp .d.zero { color: var(--dimmer); }
+.ck-comp .t { color: var(--dim); }
+.ck-comp.unknown .t { font-style: italic; }
+
+/* ── panels ─────────────────────────────────────────────────────────── */
+.ck-panel { margin-bottom: 20px; }
+.ck-panel-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--rule); padding-bottom: 5px; margin-bottom: 9px; }
+.ck-panel h2 { font-size: 11.5px; font-weight: 700; letter-spacing: 0.18em; margin: 0; color: var(--ink); }
+.ck-count { font-family: var(--font-num); font-size: 11px; color: var(--dim); }
+.ck-note { font-size: 11.5px; line-height: 1.5; color: var(--dim); max-width: 96ch; margin: 0 0 10px; }
+.ck-note code { font-family: var(--font-num); font-size: 10.5px; color: var(--ink); }
+
+.ck-tabs { margin-left: auto; display: flex; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+.ck-tabs button {
+  background: none; border: none; cursor: pointer; padding: 3px 9px;
+  font-family: var(--font-num); font-size: 9.5px; letter-spacing: 0.1em; color: var(--dimmer);
+}
+.ck-tabs button[aria-pressed="true"] { background: var(--panel-hi); color: var(--ink); }
+
+/* what changed */
+.ck-changed { list-style: none; margin: 0 0 8px; padding: 0; counter-reset: c; }
+.ck-changed li {
+  counter-increment: c; display: flex; gap: 11px; padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.ck-changed li::before {
+  content: counter(c); font-family: var(--font-num); font-weight: 700; font-size: 13px;
+  color: var(--dimmer); min-width: 16px;
+}
+.ck-ch-h { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ck-ch-d { font-family: var(--font-num); font-size: 10.5px; color: var(--dim); margin-top: 2px; }
+.ck-ch-kind {
+  font-family: var(--font-num); font-size: 9px; letter-spacing: 0.1em;
+  border: 1px solid var(--rule); border-radius: 2px; padding: 0 4px; color: var(--dimmer);
+  margin-left: auto; align-self: flex-start; white-space: nowrap;
+}
+.ck-ch-kind[data-k="score"] { border-color: var(--watch); color: var(--watch); }
+.ck-ch-kind[data-k="threshold"] { border-color: var(--stress); color: var(--stress); }
+.ck-empty { font-family: var(--font-num); font-size: 11.5px; color: var(--dimmer); padding: 8px 0; }
+
+/* tables */
+.ck-table-wrap { overflow-x: auto; }
+.ck-table { border-collapse: collapse; width: 100%; font-family: var(--font-num); font-size: 11.5px; }
+.ck-table th {
+  font-family: var(--font-label); font-size: 9.5px; letter-spacing: 0.14em; font-weight: 700;
+  color: var(--dimmer); text-align: right; padding: 3px 10px 5px 0; border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.ck-table th:first-child, .ck-table td:first-child { text-align: left; }
+.ck-table td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+.ck-table td.pos { color: var(--ok); }
+.ck-table td.neg { color: var(--stress); }
+.ck-table td.na { color: var(--dimmer); }
+.ck-table .st {
+  font-size: 9.5px; letter-spacing: 0.1em; border: 1px solid var(--rule);
+  border-radius: 2px; padding: 1px 5px;
+}
+.ck-table .st[data-s="IMMINENT"], .ck-table .st[data-s="THROUGH TARGET"] { border-color: var(--watch); color: var(--watch); }
+.ck-table .st[data-s="CLOSE"] { border-color: var(--dim); color: var(--ink); }
+.ck-table .st[data-s="NO DATA"] { border-style: dashed; color: var(--dimmer); }
+.ck-table tr.widening td { color: var(--stress); }
+
+/* alerts */
+.ck-alert { display: flex; gap: 11px; padding: 7px 0; border-bottom: 1px solid var(--rule); align-items: baseline; }
+.ck-alert .pri {
+  font-family: var(--font-num); font-size: 9px; letter-spacing: 0.12em;
+  border: 1px solid var(--rule); border-radius: 2px; padding: 1px 5px; white-space: nowrap;
+}
+.ck-alert[data-p="CRITICAL"] .pri { border-color: var(--crit); color: var(--crit); }
+.ck-alert[data-p="WARNING"] .pri { border-color: var(--stress); color: var(--stress); }
+.ck-alert[data-p="WATCH"] .pri { border-color: var(--watch); color: var(--watch); }
+.ck-alert .msg { font-size: 12.5px; line-height: 1.4; }
+.ck-alert .when { font-family: var(--font-num); font-size: 10px; color: var(--dimmer); margin-left: auto; white-space: nowrap; }
+
+/* evidence columns */
+.ck-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.ck-col h3 { font-size: 10px; letter-spacing: 0.16em; color: var(--dimmer); margin: 0 0 7px; }
+.ck-ev { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--rule); font-size: 12px; line-height: 1.4; }
+.ck-ev .m { font-family: var(--font-num); font-weight: 700; }
+.ck-ev.sup .m { color: var(--watch); }
+.ck-ev.con .m { color: var(--ok); }
+.ck-ev .dt { font-family: var(--font-num); font-size: 10.5px; color: var(--dim); display: block; margin-top: 2px; }
+
+.ck-chart { height: 260px; }
+.ck-legend { font-family: var(--font-num); font-size: 10px; color: var(--dim); display: flex; gap: 16px; flex-wrap: wrap; margin-top: 5px; }
+.ck-legend i { display: inline-block; width: 14px; height: 0; border-top-width: 2px; border-top-style: solid; margin-right: 5px; vertical-align: middle; }
+
+/* timeline */
+.ck-tl { display: flex; flex-direction: column; gap: 0; }
+.ck-tl-row { display: flex; gap: 11px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-family: var(--font-num); font-size: 11.5px; align-items: baseline; }
+.ck-tl-row .d { color: var(--dim); min-width: 84px; }
+.ck-tl-row .p { color: var(--ink); font-weight: 700; }
+.ck-tl-row .e { color: var(--dimmer); font-size: 10.5px; }
+
+.ck-foot { border-top: 1px solid var(--rule); padding: 14px 16px 28px; max-width: 1500px; margin: 0 auto; }
+.ck-foot p { font-family: var(--font-num); font-size: 11px; color: var(--dim); margin: 0 0 5px; }
+.ck-foot-sub { font-size: 10px !important; color: var(--dimmer) !important; line-height: 1.5; max-width: 92ch; }
+
+/* ── responsive: the iPhone read is the primary one ─────────────────── */
+@media (max-width: 1240px) {
+  .ck-cards { grid-template-columns: 1fr 1fr 1fr; }
+  #card-phase { grid-column: span 3; min-height: 0; }
+  .ck-two { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .ck-main { padding: 12px 12px 32px; }
+  .ck-cards { grid-template-columns: 1fr 1fr; gap: 8px; }
+  #card-phase { grid-column: span 2; }
+  #card-liquidity { grid-column: span 2; }
+  .ck-card { min-height: 0; padding: 10px 11px; }
+  .ck-card .ck-v { font-size: 26px; }
+  #card-phase .ck-v { font-size: 17px; }
+  .ck-changed li { flex-wrap: wrap; }
+  .ck-ch-kind { margin-left: 0; }
+  .ck-head { padding: 8px 12px; }
+  .ck-meta { width: 100%; margin-left: 0; justify-content: space-between; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ck-card { transition: background 120ms ease; }
+}

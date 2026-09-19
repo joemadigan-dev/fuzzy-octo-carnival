@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melt-Up &amp; Doomsday Tracker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230d0f11'/%3E%3Cpath d='M2 12 L6 7 L9 9 L14 3' stroke='%23e8b33a' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
+<meta name="description" content="Scenario monitoring for the Hunter melt-up / bust / QE / commodity-supercycle thesis, against live market and macro data.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Spline+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/cockpit.css">
+</head>
+<body>
+
+<header class="ck-head">
+  <div class="ck-brand">
+    <span class="ck-b1">MELT-UP &amp; DOOMSDAY</span>
+    <span class="ck-b2">TRACKER</span>
+  </div>
+  <div class="ck-meta">
+    <span id="ck-asof">—</span>
+    <a href="/" class="ck-link">conditions barometer →</a>
+  </div>
+</header>
+
+<div class="ck-outage" id="ck-outage" hidden></div>
+
+<!-- 1. EXECUTIVE COCKPIT -->
+<main class="ck-main">
+  <section class="ck-cards" id="ck-cards" aria-label="Executive cockpit">
+    <div class="ck-card ck-skel" id="card-phase"></div>
+    <div class="ck-card ck-skel" id="card-meltup"></div>
+    <div class="ck-card ck-skel" id="card-bust"></div>
+    <div class="ck-card ck-skel" id="card-credit"></div>
+    <div class="ck-card ck-skel" id="card-liquidity"></div>
+  </section>
+
+  <!-- 2. WHAT CHANGED -->
+  <section class="ck-panel" aria-label="What changed">
+    <div class="ck-panel-head">
+      <h2>WHAT CHANGED?</h2>
+      <div class="ck-tabs" role="group" aria-label="Horizon" id="ck-horizon">
+        <button data-h="day" aria-pressed="false">YESTERDAY</button>
+        <button data-h="week" aria-pressed="true">THIS WEEK</button>
+        <button data-h="month" aria-pressed="false">THIS MONTH</button>
+      </div>
+    </div>
+    <ol class="ck-changed" id="ck-changed"></ol>
+    <p class="ck-note">Ranked by importance to the model, not by size of move: a score or stage change outranks
+      any price move, and a threshold crossing outranks drift inside a band.</p>
+  </section>
+
+  <!-- 3. ACTIVE ALERTS -->
+  <section class="ck-panel" aria-label="Active alerts">
+    <div class="ck-panel-head"><h2>ACTIVE ALERTS</h2><span class="ck-count" id="ck-alert-count"></span></div>
+    <div id="ck-alerts"></div>
+  </section>
+
+  <!-- 4. HUNTER TARGETS -->
+  <section class="ck-panel" aria-label="Hunter target tracker">
+    <div class="ck-panel-head"><h2>HUNTER TARGET TRACKER</h2></div>
+    <p class="ck-note">Scenario assumptions and public forecasts <b>attributed to David Hunter</b> — not predictions
+      made by this dashboard. Edit <code>config/hunter_targets.json</code> to change them.</p>
+    <div class="ck-table-wrap"><table class="ck-table" id="ck-targets"></table></div>
+  </section>
+
+  <!-- 5. MELT-UP DETAIL -->
+  <section class="ck-panel" aria-label="Melt-up detail">
+    <div class="ck-panel-head"><h2>MELT-UP DETAIL</h2></div>
+    <div id="ck-meltup-detail"></div>
+  </section>
+
+  <!-- 6. CREDIT CANARY -->
+  <section class="ck-panel" aria-label="Credit canary">
+    <div class="ck-panel-head"><h2>CREDIT CANARY — LADDER</h2><span class="ck-count" id="ck-credit-verdict"></span></div>
+    <p class="ck-note">Stress travels up the ladder. Until it reaches investment grade it is a high-yield problem,
+      not a systemic one — and the stage is held below CONTAGION while IG is calm for exactly that reason.
+      <b>Data limit:</b> FRED licenses the ICE BofA tier indices on a rolling ~3-year window, so CCC, BB and IG
+      history begins around 2023 and the ladder cannot be read through 2008 or 2020. Broad HY reaches further back.</p>
+    <div class="ck-table-wrap"><table class="ck-table" id="ck-ladder"></table></div>
+  </section>
+
+  <!-- 7. RATES + CREDIT + EQUITIES -->
+  <section class="ck-panel" aria-label="Rates, credit and equities">
+    <div class="ck-panel-head"><h2>RATES · CREDIT · EQUITIES</h2></div>
+    <p class="ck-note">The sequence this chart exists to catch: the 10Y rises, credit begins widening, equities stay
+      elevated, then equities break. And its mirror — the 10Y collapsing while spreads explode, which would be
+      deflationary-bust confirmation rather than relief. Hunter expects the second; Noble and Chanos point at the
+      first. Both can happen, in order.</p>
+    <div id="ck-rates-chart" class="ck-chart"></div>
+    <div class="ck-legend" id="ck-rates-legend"></div>
+  </section>
+
+  <!-- 8. LIQUIDITY / FED -->
+  <section class="ck-panel" aria-label="Liquidity and the Fed">
+    <div class="ck-panel-head"><h2>LIQUIDITY / FED — QE DETECTOR</h2></div>
+    <div id="ck-liquidity-detail"></div>
+  </section>
+
+  <!-- 9. COMMODITIES -->
+  <section class="ck-panel" aria-label="Commodities">
+    <div class="ck-panel-head"><h2>COMMODITY SUPERCYCLE MONITOR</h2></div>
+    <p class="ck-note">Supercycle confirmation requires several commodities leading at once alongside an expanding
+      balance sheet — one metal making a new high is not a supercycle.</p>
+    <div class="ck-table-wrap"><table class="ck-table" id="ck-commodities"></table></div>
+  </section>
+
+  <!-- 10. THESIS EVIDENCE -->
+  <section class="ck-panel" aria-label="Supporting and contradicting evidence">
+    <div class="ck-panel-head"><h2>SUPPORTING vs CONTRADICTING EVIDENCE</h2></div>
+    <p class="ck-note">Three distinct propositions, deliberately not merged: <b>Hunter</b> (melt-up → deflationary
+      bust → massive QE → commodity supercycle), <b>Noble</b> (AI as capital misallocation exposed by rising rates),
+      <b>Chanos</b> (capital intensity, falling incremental returns and depreciation assumptions unwinding). The
+      contradicting column is fed by the barometer's disconfirmation tests and gets the same space as the supporting one.</p>
+    <div class="ck-two" id="ck-evidence"></div>
+  </section>
+
+  <!-- 11. REGIME TIMELINE -->
+  <section class="ck-panel" aria-label="Phase history">
+    <div class="ck-panel-head"><h2>PHASE TIMELINE</h2></div>
+    <div id="ck-timeline"></div>
+  </section>
+
+  <!-- 12. DATA SOURCES -->
+  <section class="ck-panel" aria-label="Data sources and freshness">
+    <div class="ck-panel-head"><h2>DATA SOURCES &amp; FRESHNESS</h2></div>
+    <div class="ck-table-wrap"><table class="ck-table" id="ck-sources"></table></div>
+  </section>
+</main>
+
+<footer class="ck-foot">
+  <p>For informational and research purposes only. This dashboard does not constitute financial advice.</p>
+  <p class="ck-foot-sub">Regime and scores are classifications generated from the indicators shown, not objective
+    facts about the world. Sources: FRED · Damodaran (NYU Stern) · stooq · Yahoo Finance (market-data proxy,
+    delayed) · CNN · NAAIM.</p>
+</footer>
+
+<script src="/vendor/uPlot.iife.min.js"></script>
+<script src="/cockpit.js"></script>
+</body>
+</html>
