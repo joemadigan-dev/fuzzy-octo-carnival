@@ -92,6 +92,17 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   /** Persist the timings so far. Called mid-run as well as at the end: if
    *  the isolate is killed, the mid-run checkpoint is the only evidence
    *  left of how far it got and which stage was running. */
+  // Captured before the first checkpoint overwrites it. The cockpit runs
+  // just after saveProgress(false), so reading `last_run_log` there would
+  // read THIS run's own mid-run checkpoint — which always says done:false
+  // and always ends at wall_state, making system health report AMBER on
+  // every successful run.
+  const prevRunLogRow = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run_log'")
+    .first<{ value: string }>();
+  const prevRunLog = prevRunLogRow?.value
+    ? JSON.parse(prevRunLogRow.value) as { done?: boolean; marks?: string[] }
+    : null;
+
   const saveProgress = async (done: boolean) => {
     await env.DB.prepare(
       `INSERT INTO meta (key, value) VALUES ('last_run_log', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
@@ -421,9 +432,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // survive, not by what was written first. The cockpit needs only
   // seriesMap, which is complete by here.
   try {
-    const prevLog = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run_log'")
-      .first<{ value: string }>();
-    const prev = prevLog?.value ? JSON.parse(prevLog.value) as { done?: boolean; marks?: string[] } : null;
+    const prev = prevRunLog;
     const prevBaro = await env.DB.prepare('SELECT computed_at FROM signal_state WHERE id = 1')
       .first<{ computed_at: string }>();
     log.push(...await runCockpit(env, seriesMap, nowIso, {
