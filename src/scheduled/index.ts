@@ -454,7 +454,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     // run records where its time went and a reader can compare a slow run
     // against a normal one. No extra D1 work: these ride the meta write
     // that saveProgress already performs.
-    for (const st of result.stages) marks.push(`  barometer.${st.name} ${(st.ms / 1000).toFixed(1)}s${st.note ? ` (${st.note})` : ''}`);
+    for (const [n, st] of result.stages.entries()) marks.push(`  barometer.${n + 1}.${st.name}${st.note ? ` (${st.note})` : ''}`);
     mark('barometer');
     const stmts: D1PreparedStatement[] = [];
 
@@ -597,7 +597,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     const got = barometerStages();
     log.push(`barometer: FAILED — ${e}`);
     log.push(`barometer stages completed before the failure: ${got.length ? got.map((x) => x.name).join(' → ') : 'none'}`);
-    for (const st of got) marks.push(`  barometer.${st.name} ${(st.ms / 1000).toFixed(1)}s`);
+    for (const [n, st] of got.entries()) marks.push(`  barometer.${n + 1}.${st.name}`);
   }
   mark('accountability');
 

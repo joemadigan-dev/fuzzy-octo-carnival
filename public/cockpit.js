@@ -7,6 +7,8 @@
   'use strict';
 
   const POLL_MS = 120_000;
+  /** How recent a transition must be to count as actionable. */
+  const ACTIVE_DAYS = 30;
   const INK = '#e6e8ea', DIM = '#9aa1a8', GRID = '#272c31';
   const $ = (id) => document.getElementById(id);
 
@@ -253,18 +255,24 @@
   // ── 3. ALERTS ───────────────────────────────────────────────────────
   function renderAlerts() {
     const box = $('ck-alerts');
-    // One row per condition, most recent first. Alerts logged before the
-    // latch was added repeat the same condition on many dates; this panel
-    // answers "what is true now", so it collapses them rather than showing
-    // one condition six times. Nothing is deleted — the full log keeps
-    // every row.
+    // "What is actionable now", not "everything ever logged". Two filters:
+    // one row per condition (alerts logged before latching repeat the same
+    // condition across many dates), and only transitions from the last
+    // ACTIVE_DAYS. A regime change from August is history, not something
+    // to act on. Nothing is deleted — ALERT HISTORY keeps every row.
+    const cutoff = Date.now() - ACTIVE_DAYS * 86400000;
     const seen = new Set();
     const rows = (alerts ?? []).filter((a) => {
       const id = `${a.kind}:${a.key}`;
       if (seen.has(id)) return false;
-      seen.add(id); return true;
+      seen.add(id);
+      return Date.parse(a.date) >= cutoff;
     }).slice(0, 12);
-    $('ck-alert-count').textContent = rows.length ? `${rows.length} most recent` : '';
+    const suppressed = new Set((alerts ?? []).map((a) => `${a.kind}:${a.key}`)).size - rows.length;
+    $('ck-alert-count').textContent = rows.length
+      ? `${rows.length} condition${rows.length > 1 ? 's' : ''} in the last ${ACTIVE_DAYS} days`
+        + (suppressed > 0 ? ` · ${suppressed} older in history` : '')
+      : `nothing in the last ${ACTIVE_DAYS} days`;
     box.innerHTML = rows.length
       ? rows.map((a) => {
           const p = priority(a);
@@ -274,7 +282,7 @@
             <span class="when">${a.date}</span>
           </div>`;
         }).join('')
-      : '<div class="ck-empty">No alerts recorded yet.</div>';
+      : `<div class="ck-empty">No condition has become true in the last ${ACTIVE_DAYS} days. Older entries are in ALERT HISTORY.</div>`;
   }
   function renderAlertHistory() {
     const rows = (alerts ?? []).slice(0, 100);

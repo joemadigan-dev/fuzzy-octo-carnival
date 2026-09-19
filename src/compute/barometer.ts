@@ -146,6 +146,8 @@ export interface DivergenceNow {
  *  run log the cron already writes, so they cost no additional D1 work.
  *  A stage that never completes simply has no entry, and the last one
  *  present names where it died. */
+/** `ms` is -1 by design: see the note in `stage()`. Workers freeze the
+ *  clock inside a synchronous block, so only the ORDER is measurable. */
 export interface Stage { name: string; ms: number; note?: string }
 
 export interface BarometerResult {
@@ -176,20 +178,22 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   // caller can read how far we got even when this function never returns.
   const stages: Stage[] = [];
   lastStages = stages;
-  let t = Date.now();
+  let seq = 0;
   const stage = (name: string, note?: string) => {
-    const now = Date.now();
-    stages.push({ name, ms: now - t, ...(note ? { note } : {}) });
-    t = now;
-    // Emitted as well as collected. This function is entirely synchronous,
-    // so an isolate killed inside it can never checkpoint to D1 — nothing
-    // can write mid-block. The Workers log stream flushes independently of
-    // the return value and costs no database work, so the last line
-    // emitted is what names the stage that died. `[observability]` is on
-    // in wrangler.toml, so these are queryable after the fact.
-    console.log(`barometer.${name} ${now - t0Abs}ms${note ? ` (${note})` : ''}`);
+    // NO DURATION. Workers freeze Date.now() across a synchronous block —
+    // it only advances around I/O — so every timing taken inside this
+    // function is identically zero. The first cut reported "0ms" for all
+    // seven stages, which looks like a measurement and is not one.
+    //
+    // What IS diagnostic is the SEQUENCE. This function is synchronous, so
+    // an isolate killed inside it can never checkpoint to D1; nothing can
+    // write mid-block. The Workers log stream flushes independently of the
+    // return value and costs no database work, so the last line emitted
+    // names the stage that died. `[observability]` is on in wrangler.toml,
+    // so these survive for querying after the fact.
+    stages.push({ name, ms: -1, ...(note ? { note } : {}) });
+    console.log(`barometer.${++seq}.${name}${note ? ` (${note})` : ''}`);
   };
-  const t0Abs = t;
 
   const members = KPIS.filter((k) => k.subIndex);
 
