@@ -15,6 +15,7 @@ import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { computeBaseRates } from '../compute/baserates.ts';
 import { computeImpulseSweep } from '../compute/impulse.ts';
 import { runAlerts, reviewJournal } from './accountability.ts';
+import { runCockpit } from './cockpit.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
 export interface Env {
@@ -554,6 +555,17 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     log.push(`barometer: FAILED — ${e}`);
   }
   mark('accountability');
+
+  // ── 7. executive cockpit ─────────────────────────────────────────────
+  // Deliberately OUTSIDE the barometer's try/catch: the cockpit is the
+  // first screen and must survive a barometer failure, since it shares
+  // none of its machinery.
+  try {
+    log.push(...await runCockpit(env, seriesMap, nowIso));
+  } catch (e) {
+    log.push(`cockpit: FAILED — ${e}`);
+  }
+  mark('cockpit');
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,

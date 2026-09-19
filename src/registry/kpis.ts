@@ -708,6 +708,16 @@ export const KPIS: KpiDef[] = [
     refresh: 'daily', hidden: true, source: 'yahoo', seriesId: 'SI=F' },
   { id: 'gdx', label: 'GDX', cluster: 'thesis', unit: '$', decimals: 2,
     refresh: 'daily', hidden: true, source: 'yahoo', seriesId: 'GDX' },
+  // Cockpit inputs. Hidden: they feed the executive cards rather than
+  // earning a tile of their own on the wall.
+  { id: 'us2y', label: '2Y TREASURY', cluster: 'four_bodies', unit: '%', decimals: 2,
+    refresh: 'daily', hidden: true, source: 'fred', seriesId: 'DGS2' },
+  // The nearest thing FRED carries to margin debt. FINRA's own series is
+  // not on FRED; this is the Z.1 brokers-and-dealers receivables line,
+  // quarterly and in arrears, and the UI labels it as the proxy it is.
+  { id: 'margin_debt', label: 'BROKER RECEIVABLES', cluster: 'trend', unit: '$mn', decimals: 0,
+    refresh: 'daily', freq: 'quarterly', hidden: true,
+    source: 'fred', seriesId: 'BOGZ1FL663067003Q' },
   { id: 'corp_eq', label: 'CORP EQUITIES / GDP RAW', cluster: 'trend', unit: '', decimals: 2,
     refresh: 'daily', freq: 'quarterly', hidden: true,
     // NCBEILQ027S is $mn of corporate equities; GDP is $bn — the eq_gdp

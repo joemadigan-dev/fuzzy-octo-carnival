@@ -46,6 +46,7 @@ export default {
       if (path === '/api/wall') res = await apiWall(env);
       else if (path === '/api/barometer') res = await apiBarometer(env);
       else if (path === '/api/alerts') res = await apiAlerts(env);
+      else if (path === '/api/cockpit') res = await apiCockpit(env);
       else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
       else res = json({ error: 'not found' }, 404);
     } catch (e) {
@@ -199,6 +200,28 @@ async function apiSeries(env: Env, rawId: string): Promise<Response> {
     + `,"refLine":${JSON.stringify(def.refLine ?? null)},"data":${row.points}}`,
     { status: 200, headers: baseHeaders(300) },
   );
+}
+
+/** Executive cockpit — section 27. Everything the first screen needs in
+ *  one finished object; the request path does no arithmetic. */
+async function apiCockpit(env: Env): Promise<Response> {
+  const [row, changes, timeline] = await Promise.all([
+    env.DB.prepare('SELECT date, computed_at, detail FROM cockpit_history ORDER BY date DESC LIMIT 1')
+      .first<{ date: string; computed_at: string; detail: string }>(),
+    env.DB.prepare('SELECT date, from_phase, to_phase, held_days, evidence FROM phase_changes ORDER BY date DESC LIMIT 50').all(),
+    env.DB.prepare(
+      `SELECT date, phase, candidate_phase, phase_settled, meltup, bust, bust_vulnerability,
+              bust_onset, credit, credit_stage, liquidity_regime
+         FROM cockpit_history ORDER BY date DESC LIMIT 400`,
+    ).all(),
+  ]);
+  if (!row) return json({ error: 'cockpit not computed yet' }, 503);
+  return json({
+    ...JSON.parse(row.detail),
+    storedAt: row.computed_at,
+    phaseChanges: (changes.results ?? []).map((c) => ({ ...c, evidence: safeParse(c.evidence as string | null) })),
+    timeline: (timeline.results ?? []).reverse(),
+  }, 200, 120);
 }
 
 async function apiAlerts(env: Env): Promise<Response> {

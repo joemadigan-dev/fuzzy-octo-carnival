@@ -1,0 +1,122 @@
+{
+  "_comment": [
+    "Every threshold the cockpit scores against. Nothing in src/scoring/ may",
+    "hard-code a number that belongs here.",
+    "",
+    "Scores are 0-5 and are built by ADDING named components, each worth at",
+    "most 1. A component with no data contributes 0 and says so — a missing",
+    "feed must never read as a benign reading, and must never invent a signal."
+  ],
+
+  "meltup": {
+    "_comment": "Section 6. Six-month return is the spine; acceleration matters more than level.",
+    "ret6m_notable": 10,
+    "ret6m_parabolic": 22,
+    "ret3m_notable": 8,
+    "accel_notable": 5,
+    "target_within_pct": 20,
+    "target_close_pct": 10,
+    "target_imminent_pct": 5,
+    "credit_calm_hy_pct": 4.0,
+    "vix_complacent": 16,
+    "breadth_divergence_pct": -3
+  },
+
+  "bust": {
+    "_comment": "Section 7. Five categories, each contributing at most 1.",
+    "valuation": {
+      "cape_elevated": 25, "cape_extreme": 35,
+      "mcap_gdp_elevated": 120, "mcap_gdp_extreme": 160,
+      "erp_thin_pct": 3.5
+    },
+    "leverage": {
+      "margin_debt_yoy_elevated": 20,
+      "margin_debt_yoy_extreme": 35,
+      "put_call_complacent": 0.65
+    },
+    "liquidity": {
+      "walcl_13w_contraction_pct": -1.0,
+      "net_liq_13w_contraction_pct": -3.0,
+      "sofr_iorb_stress_bp": 5
+    },
+    "internals": {
+      "vix_stress": 25,
+      "vix_crisis": 30,
+      "drawdown_correction": -10,
+      "drawdown_bear": -20,
+      "breadth_deteriorating_pct": -3
+    }
+  },
+
+  "credit": {
+    "_comment": [
+      "Section 8. Stage 0-5. Rate-of-change matters as much as level: a move",
+      "from 2.7% to 3.7% can be more informative than a static 4%.",
+      "",
+      "NOTE: FRED licenses the ICE BofA tier indices (CCC/BB/IG) on a rolling",
+      "~3-year window, so the tiered ladder cannot see 2008 or 2020. Broad HY",
+      "reaches further back. The UI states this."
+    ],
+    "hy_calm": 4.0,
+    "hy_caution": 6.0,
+    "hy_stress": 8.0,
+    "hy_roc20_bp": 50,
+    "hy_roc5_bp": 25,
+    "ccc_roc20_bp": 65,
+    "bb_roc20_bp": 40,
+    "ig_roc20_bp": 20,
+    "ig_stress_pct": 1.5,
+    "ladder_widening_bp": 75
+  },
+
+  "rates": {
+    "_comment": "Section 11. Both directions: rising rates as trigger, collapsing rates as bust confirmation.",
+    "us10y_watch": 4.5,
+    "us10y_warning": 5.0,
+    "us10y_critical": 5.5,
+    "collapse_60d_bp": -75,
+    "real_impulse_bp": 75
+  },
+
+  "liquidity": {
+    "_comment": "Section 12. Distinguish routine balance-sheet drift from emergency expansion.",
+    "walcl_qe_4w_bn": 250,
+    "walcl_qe_13w_bn": 500,
+    "walcl_major_qe_bn": 1000,
+    "walcl_extraordinary_bn": 5000,
+    "walcl_qt_13w_bn": -250
+  },
+
+  "commodities": {
+    "_comment": "Section 13. Supercycle confirmation needs several signals, not one new high.",
+    "outperformance_6m_pct": 10,
+    "breadth_min_confirming": 3
+  },
+
+  "phase": {
+    "_comment": [
+      "Section 4. A phase must not flip on one day's move. `persistDays` is the",
+      "number of consecutive sessions a candidate phase must hold before it is",
+      "adopted — the same hysteresis the Barometer uses on its regimes."
+    ],
+    "persistDays": 3,
+    "parabolic_ret6m": 22,
+    "bust_warning_drawdown": -8,
+    "bust_drawdown": -20,
+    "bust_credit_stage": 3,
+    "qe_walcl_13w_bn": 500,
+    "supercycle_outperformance_pct": 15
+  },
+
+  "alerts": {
+    "_comment": "Section 17. The alerts table PK (date, kind, key) is the dedup mechanism.",
+    "target_within_pct": 10,
+    "ret6m_pct": 20,
+    "us10y_pct": 5.0,
+    "hy_roc20_bp": 50,
+    "hy_level_pct": 6.0,
+    "vix_level": 30,
+    "drawdown_pct": -20,
+    "walcl_4w_bn": 500
+  }
+}

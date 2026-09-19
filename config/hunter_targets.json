@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Scenario assumptions and public forecasts ATTRIBUTED TO DAVID HUNTER.",
+    "These are not predictions made by this application. Edit this file when",
+    "Hunter publishes new figures; nothing else needs to change.",
+    "",
+    "`statedOn` is when the forecast was recorded here, and drives the thesis",
+    "decay readout — elapsed time against the stated horizon is a fact the",
+    "dashboard reports about itself."
+  ],
+
+  "meltup": {
+    "sp500":    { "target": 10000, "label": "S&P 500" },
+    "dow":      { "target": 70000, "label": "Dow Jones" },
+    "nasdaq":   { "target": 36000, "label": "NASDAQ Composite" },
+    "russell2000": { "target": 4000, "label": "Russell 2000" },
+    "gold":     { "target": 7000,  "label": "Gold" },
+    "silver":   { "target": 200,   "label": "Silver" },
+    "gdx":      { "target": 180,   "label": "GDX" },
+    "smh":      { "target": 800,   "label": "SMH" }
+  },
+
+  "bust": {
+    "_comment": "Post-melt-up bust scenario. Equity drawdown is a range, not a point.",
+    "equity_drawdown_low": -60,
+    "equity_drawdown_high": -80,
+    "us10y": 3.0,
+    "oil": 60,
+    "oil_extended": 30
+  },
+
+  "longTerm": {
+    "_comment": "Post-bust commodity supercycle assumptions, much longer horizon.",
+    "gold": 20000,
+    "silver": 500,
+    "oil_low": 200,
+    "oil_high": 500
+  },
+
+  "forecasts": [
+    { "label": "MELT-UP TO S&P 10,000", "statedOn": "2026-02-07", "horizonMonths": 12,
+      "claim": "Parabolic melt-up completing before the global bust." },
+    { "label": "GLOBAL BUST BEGINS", "statedOn": "2026-02-07", "horizonMonths": 12,
+      "claim": "Bust follows the melt-up peak." },
+    { "label": "10Y TO 3.00%", "statedOn": "2026-08-07", "horizonMonths": 6,
+      "claim": "Long yields fall to 3% as growth rolls over." }
+  ]
+}
