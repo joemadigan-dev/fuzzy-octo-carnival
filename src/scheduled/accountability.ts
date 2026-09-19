@@ -35,21 +35,39 @@ interface Candidate {
   stateful?: boolean;
 }
 
+/** Alerts run on whatever evidence exists.
+ *
+ *  `barometer` is OPTIONAL. Regime and divergence alerts need it; nothing
+ *  else does. Previously this whole function sat inside the barometer's
+ *  try block, so a barometer failure silently suppressed percentile,
+ *  threshold, state-band and Hunter-target alerts that depend only on the
+ *  series data — alerts were delayed until the next successful barometer
+ *  run, which on a bad day meant hours. An alert should depend only on the
+ *  data it actually requires.
+ *
+ *  Latching, per-day dedup, history and current-condition semantics are
+ *  unchanged: the barometer-dependent candidates are simply skipped when
+ *  there is no barometer, and their latches are left untouched so they are
+ *  neither fired nor spuriously re-armed. */
 export async function runAlerts(
   env: Env,
-  result: BarometerResult,
   seriesMap: Map<string, Point[]>,
   prevFlags: Map<string, string | null>,
   currFlags: Map<string, string | null>,
   nowIso: string,
+  barometer: BarometerResult | null,
 ): Promise<string[]> {
   const log: string[] = [];
   const today = nowIso.slice(0, 10);
-  const hist = result.history;
-  if (!hist.length) return log;
-  const lastDate = hist[hist.length - 1].date;
   const candidates: Candidate[] = [];
   const regimeNow = new Map<string, string>();
+  const hist = barometer?.history ?? [];
+  if (barometer && !hist.length) {
+    log.push('alerts: barometer produced no history — running data-only alerts');
+  }
+  if (!barometer) {
+    log.push('alerts: no barometer this run — running data-only alerts (regime and divergence skipped)');
+  }
 
   // 1. regime change on either gauge.
   //
@@ -63,20 +81,21 @@ export async function runAlerts(
   //    question that matters to a reader: is the regime now different from
   //    the one I was last told about?
   const lastAlerted = new Map<string, string>();
+  if (barometer && hist.length) {
   const regimeRows = await env.DB.prepare("SELECT key, value FROM meta WHERE key LIKE 'alert_regime:%'")
     .all<{ key: string; value: string }>();
   for (const r of regimeRows.results ?? []) lastAlerted.set(r.key.slice(14), r.value);
 
   for (const layer of ['pressure', 'altitude'] as const) {
     for (const w of ['2y', '5y'] as const) {
-      const adopted = result.detail[layer][w].regime;
+      const adopted = barometer.detail[layer][w].regime;
       if (!adopted) continue;
       const id = `${layer}:${w}`;
       const was = lastAlerted.get(id) ?? null;
       regimeNow.set(id, adopted);
       if (was === adopted) continue;
       if (was === null) continue;            // first sighting is not a change
-      const c = [...result.changes].reverse().find((x) => x.layer === layer && x.window === w && x.to_regime === adopted);
+      const c = [...barometer.changes].reverse().find((x) => x.layer === layer && x.window === w && x.to_regime === adopted);
       const top = (c?.drivers ?? []).slice(0, 3).map((d) => `${d.id} z=${d.z.toFixed(1)}`).join(', ');
       candidates.push({
         kind: 'regime',
@@ -89,10 +108,12 @@ export async function runAlerts(
     }
   }
 
-  // 2. divergence configuration opening or closing
+  } // end barometer-dependent regime alerts
+
+  // 2. divergence configuration opening or closing — also barometer-only
   const prevRow = hist.length >= 2 ? hist[hist.length - 2] : null;
-  for (const w of ['2y', '5y'] as const) {
-    const now = result.divergenceNow[w];
+  if (barometer) for (const w of ['2y', '5y'] as const) {
+    const now = barometer.divergenceNow[w];
     const was = prevRow ? (w === '2y' ? prevRow.div_2y : prevRow.div_5y) === 1 : false;
     if (now.active && !was) {
       candidates.push({ kind: 'divergence', key: `${w}:open`, message: `DIVERGENCE OPENED (${w}) — altitude high while pressure falls; the pre-bust configuration. Was: no divergence.`, detail: now });

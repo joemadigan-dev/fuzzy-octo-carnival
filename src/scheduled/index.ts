@@ -10,7 +10,7 @@ import { KPIS, BACKFILL_START, type KpiDef } from '../registry/kpis.ts';
 import { SOURCES, type Point } from '../sources/index.ts';
 import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
-import { computeBarometer, barometerStages } from '../compute/barometer.ts';
+import { computeBarometer, barometerStages, type BarometerResult } from '../compute/barometer.ts';
 import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { computeBaseRates } from '../compute/baserates.ts';
 import { computeImpulseSweep } from '../compute/impulse.ts';
@@ -448,8 +448,10 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   mark('cockpit');
 
   // ── 6. THE BAROMETER: two layers + backtest + diagnostics ────────────
+  let baroResult: BarometerResult | null = null;
   try {
     const result = computeBarometer(seriesMap);
+    baroResult = result;
     // Fold the barometer's own sub-stages into the run log, so a completed
     // run records where its time went and a reader can compare a slow run
     // against a normal one. No extra D1 work: these ride the meta write
@@ -582,22 +584,29 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     const a = result.detail.altitude['2y'];
     log.push(`barometer: pressure=${p.score} ${p.regime} · altitude=${a.score} ${a.regime} · changes=${result.changes.length} · corrFlags=${result.diagnostics.corr.flagged.length} · analogues=${result.analogues.length}`);
 
-    // ── 7. accountability: alerts + journal review ───────────────────
-    try {
-      log.push(...await runAlerts(env, result, seriesMap, prevFlags, currFlags, nowIso));
-    } catch (e) {
-      log.push(`alerts: FAILED — ${e}`);
-    }
-    try {
-      log.push(...await reviewJournal(env, seriesMap));
-    } catch (e) {
-      log.push(`journal review: FAILED — ${e}`);
-    }
   } catch (e) {
     const got = barometerStages();
     log.push(`barometer: FAILED — ${e}`);
     log.push(`barometer stages completed before the failure: ${got.length ? got.map((x) => x.name).join(' → ') : 'none'}`);
     for (const [n, st] of got.entries()) marks.push(`  barometer.${n + 1}.${st.name}`);
+  }
+  // ── 7. accountability: alerts + journal review ───────────────────
+  // OUTSIDE the barometer block and after it. An alert should depend only
+  // on the data it actually requires: regime and divergence need the
+  // barometer, everything else needs only seriesMap. `baroResult` is null
+  // when the barometer threw or was killed, and those two families are
+  // skipped rather than the entire alert pass being lost — which is what
+  // used to happen, delaying every threshold and percentile alert until
+  // the next successful barometer run.
+  try {
+    log.push(...await runAlerts(env, seriesMap, prevFlags, currFlags, nowIso, baroResult));
+  } catch (e) {
+    log.push(`alerts: FAILED — ${e}`);
+  }
+  try {
+    log.push(...await reviewJournal(env, seriesMap));
+  } catch (e) {
+    log.push(`journal review: FAILED — ${e}`);
   }
   mark('accountability');
 
