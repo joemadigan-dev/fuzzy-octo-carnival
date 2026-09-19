@@ -104,12 +104,36 @@ export const CONCEPTS: ConceptDef[] = [
       ['LongTermDebt'],
     ],
     whenMissing: 'Total borrowings could not be extracted reliably from the tagged facts. Not estimated.' },
-  { id: 'ppe', label: 'PP&E, net', kind: 'stock', chains: [
+  // THE CAPITAL BASE — the denominator of every incremental-return
+  // measure, so a wrong or missing chain here is what silently turns the
+  // central question into UNKNOWN.
+  //
+  // Alphabet, Amazon and Meta present property together with FINANCE
+  // LEASE right-of-use assets, and tag only the combined figure each
+  // quarter; the plain PP&E tags are annual or abandoned. That combined
+  // measure is taken FIRST, and not merely because it is what is
+  // available: leasing is one of the main ways datacentre capacity is
+  // financed, so a base that excluded it would understate exactly the
+  // build-out being examined. Microsoft, Oracle and Nvidia do not use
+  // those tags at all and fall through to plain PP&E.
+  //
+  // The two are not the same measure, so the resolved tag is stored
+  // alongside every value and the panel names which base each company's
+  // return was computed on rather than presenting them as like for like.
+  { id: 'ppe', label: 'Property & equipment, net of depreciation', kind: 'stock', chains: [
+      ['PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization'],
       ['PropertyPlantAndEquipmentNet'],
     ] },
-  { id: 'ppe_gross', label: 'PP&E, gross', kind: 'stock', chains: [
+  { id: 'ppe_gross', label: 'Property & equipment, before depreciation', kind: 'stock', chains: [
+      ['PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetBeforeAccumulatedDepreciationAndAmortization'],
+      // Alphabet tags the net figure and the accumulated depreciation but
+      // not their sum, so the gross base is reconstructed from the two.
+      ['PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization',
+       'PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAccumulatedDepreciationAndAmortization'],
       ['PropertyPlantAndEquipmentGross'],
-    ] },
+      ['PropertyPlantAndEquipmentNet', 'AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment'],
+    ],
+    whenMissing: 'The gross property base is not tagged every quarter by this company; the net base is used instead.' },
   { id: 'cip', label: 'Construction in progress', kind: 'stock', chains: [
       ['ConstructionInProgressGross'],
     ],
