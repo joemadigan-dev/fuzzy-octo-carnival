@@ -50,6 +50,55 @@ body {
 .ck-link { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); }
 .ck-link:hover { color: var(--ink); }
 
+/* system health — a chip, deliberately not a card */
+.ck-health {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  background: none; border: 1px solid var(--rule); border-radius: 2px;
+  padding: 1px 6px; font-family: var(--font-num); font-size: 10px;
+  letter-spacing: 0.1em; color: var(--dim);
+}
+.ck-health:hover { color: var(--ink); }
+.ck-health i { width: 7px; height: 7px; border-radius: 50%; background: var(--neutral); display: block; }
+.ck-health[data-state="GREEN"] i { background: var(--ok); }
+.ck-health[data-state="AMBER"] i { background: var(--watch); }
+.ck-health[data-state="RED"]   i { background: var(--crit); }
+.ck-health[data-state="AMBER"] { border-color: var(--watch); color: var(--watch); }
+.ck-health[data-state="RED"] { border-color: var(--crit); color: var(--crit); }
+.ck-health-detail {
+  background: var(--panel); border-bottom: 1px solid var(--rule);
+  padding: 9px 16px; font-family: var(--font-num); font-size: 11px; color: var(--dim);
+}
+.ck-hrow { margin-bottom: 4px; }
+.ck-hrow.crit { color: var(--crit); }
+.ck-hgrid {
+  display: grid; grid-template-columns: auto auto; gap: 1px 14px;
+  max-width: 460px; margin: 6px 0;
+}
+.ck-hgrid span { color: var(--dimmer); }
+.ck-hgrid b { color: var(--ink); font-weight: 700; }
+
+/* market setup — one sentence, sits directly under the cards */
+.ck-setup {
+  font-size: 14.5px; line-height: 1.5; color: var(--ink);
+  margin: 0 0 18px; padding: 9px 12px; max-width: 110ch;
+  border-left: 2px solid var(--rule); background: var(--panel);
+}
+.ck-setup .ck-more { margin-top: 0; }
+.ck-setup-why { display: block; margin-top: 7px; }
+.ck-setup-clause {
+  display: block; font-family: var(--font-num); font-size: 10.5px;
+  color: var(--dim); line-height: 1.5;
+}
+.ck-setup-clause b { color: var(--ink); font-weight: 500; }
+
+.ck-chip.partial { border-color: var(--watch); color: var(--watch); }
+.ck-comp.unknown .d { color: var(--watch); }
+.ck-comp.unknown .t b { color: var(--watch); font-weight: 700; }
+
+.ck-ch-kind[data-k="regime"] { border-color: var(--crit); color: var(--crit); }
+.ck-ch-kind[data-k="stage"] { border-color: var(--stress); color: var(--stress); }
+.ck-ch-kind[data-k="acceleration"] { border-color: var(--dim); color: var(--ink); }
+
 .ck-outage {
   font-family: var(--font-num); font-size: 12px; line-height: 1.5;
   padding: 10px 16px; background: rgba(229, 72, 77, 0.14);
@@ -245,6 +294,8 @@ body {
 }
 @media (max-width: 720px) {
   .ck-main { padding: 12px 12px 32px; }
+  .ck-setup { font-size: 13.5px; padding: 8px 10px; }
+  .ck-hgrid { grid-template-columns: 1fr auto; }
   .ck-cards { grid-template-columns: 1fr 1fr; gap: 8px; }
   #card-phase { grid-column: span 2; }
   #card-liquidity { grid-column: span 2; }

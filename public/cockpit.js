@@ -58,7 +58,7 @@
     $('ck-asof').textContent = ck.asOf ? `market data as of ${ck.asOf} · computed ${String(ck.storedAt || ck.computedAt).slice(0, 16).replace('T', ' ')}Z` : '—';
     cardPhase(); cardScore('meltup', 'MELT-UP SCORE', ck.meltup);
     cardBust(); cardCredit(); cardLiquidity();
-    renderChanged(); renderTargets(); renderMeltupDetail(); renderLadder();
+    renderHealth(); renderSetup(); renderChanged(); renderTargets(); renderMeltupDetail(); renderLadder();
     renderLiquidityDetail(); renderCommodities(); renderTimeline(); renderRatesChart();
   }
 
@@ -104,13 +104,13 @@
           ? top.map((c) => `<div class="ck-driver"><b>+${c.delta}</b><span>${esc(shortReason(c.reason))}</span></div>`).join('')
           : '<div class="ck-driver">· nothing contributing</div>'}
       </div>
-      ${s.coverage < 1 ? `<span class="ck-chip">${Math.round(s.coverage * 100)}% of evidence available</span>` : ''}
+      <span class="ck-chip${s.evidenceAvailable < s.evidenceTotal ? ' partial' : ''}">EVIDENCE ${s.evidenceAvailable}/${s.evidenceTotal}${s.evidenceAvailable < s.evidenceTotal ? ' AVAILABLE' : ''}</span>
       <button class="ck-more" aria-expanded="false">SHOW WORKING ▾</button>
       <div class="ck-breakdown" hidden>
         ${s.components.map((c) => `
           <div class="ck-comp${c.unknown ? ' unknown' : ''}">
-            <span class="d${c.delta ? '' : ' zero'}">${c.unknown ? '?' : (c.delta > 0 ? '+' : '') + c.delta}</span>
-            <span class="t">${esc(c.reason)}</span>
+            <span class="d${c.delta ? '' : ' zero'}">${c.unknown ? 'n/a' : (c.delta > 0 ? '+' : '') + c.delta}</span>
+            <span class="t">${c.unknown ? '<b>UNAVAILABLE</b> — ' : ''}${esc(c.reason)}</span>
           </div>`).join('')}
       </div>`;
     const btn = el.querySelector('.ck-more');
@@ -176,6 +176,58 @@
       <span class="ck-chip${l.rateLeg !== 'RATES STABLE' ? ' changed' : ''}">${esc(l.rateLeg)}</span>`;
   }
 
+  // ── MARKET SETUP — one deterministic sentence ───────────────────────
+  function renderSetup() {
+    const st = ck.setup;
+    if (!st) { $('ck-setup').hidden = true; return; }
+    $('ck-setup').hidden = false;
+    $('ck-setup').innerHTML = `${esc(st.sentence)}
+      <button class="ck-more" aria-expanded="false" style="margin-left:8px">WHY ▾</button>
+      <span class="ck-setup-why" hidden>${(st.clauses ?? []).map((c) =>
+        `<span class="ck-setup-clause"><b>${esc(c.text)}</b> ← ${esc(c.because)}</span>`).join('')}</span>`;
+    const b = $('ck-setup').querySelector('.ck-more');
+    b.addEventListener('click', () => {
+      const w = $('ck-setup').querySelector('.ck-setup-why');
+      const open = w.hidden; w.hidden = !open;
+      b.setAttribute('aria-expanded', String(open));
+      b.textContent = open ? 'HIDE ▴' : 'WHY ▾';
+    });
+  }
+
+  // ── SYSTEM HEALTH — small by design, never a sixth card ─────────────
+  function renderHealth() {
+    const h = ck.health;
+    const chip = $('ck-health');
+    if (!h) { chip.dataset.state = ''; $('ck-health-state').textContent = '—'; return; }
+    chip.dataset.state = h.state;
+    $('ck-health-state').textContent = h.state;
+    chip.title = h.summary;
+    const ago = (iso) => {
+      if (!iso) return 'never';
+      const hrs = (Date.now() - Date.parse(iso)) / 3600000;
+      return `${String(iso).slice(0, 16).replace('T', ' ')}Z (${hrs < 1 ? '<1' : hrs.toFixed(0)}h ago)`;
+    };
+    $('ck-health-detail').innerHTML = `
+      <div class="ck-hrow"><b>${h.state}</b> — ${esc(h.summary)}</div>
+      <div class="ck-hgrid">
+        <span>Last successful run</span><b>${ago(h.lastRun)}</b>
+        <span>Last cockpit computation</span><b>${ago(h.lastCockpit)}</b>
+        <span>Last barometer computation</span><b>${ago(h.lastBarometer)}</b>
+        <span>KPIs fresh</span><b>${h.kpisOk}</b>
+        <span>KPIs stale</span><b>${h.kpisStale}</b>
+        <span>KPIs failed</span><b>${h.kpisFailed}</b>
+        <span>Latest failed stage</span><b>${esc(h.lastFailedStage ?? 'none')}</b>
+        <span>Last run completed</span><b>${h.runCompleted ? 'yes' : 'NO'}</b>
+      </div>
+      ${h.criticalStale?.length ? `<div class="ck-hrow crit">Critical data stale: ${h.criticalStale.map(esc).join(', ')}</div>` : ''}
+      ${(h.notes ?? []).map((n) => `<div class="ck-hrow">${esc(n)}</div>`).join('')}`;
+  }
+  $('ck-health').addEventListener('click', () => {
+    const d = $('ck-health-detail');
+    const open = d.hidden; d.hidden = !open;
+    $('ck-health').setAttribute('aria-expanded', String(open));
+  });
+
   // ── 2. WHAT CHANGED ─────────────────────────────────────────────────
   function renderChanged() {
     const list = ck.whatChanged?.[horizon] ?? [];
@@ -186,7 +238,7 @@
             <div class="ck-ch-h">${esc(c.headline)}</div>
             <div class="ck-ch-d">${esc(c.detail)}</div>
           </div>
-          <span class="ck-ch-kind" data-k="${c.kind}">${c.kind.toUpperCase()}</span>
+          <span class="ck-ch-kind" data-k="${c.kind}">${String(c.kind).toUpperCase()}</span>
         </li>`).join('')
       : `<li style="padding-left:0"><div class="ck-empty">Nothing crossed a threshold or moved materially over this horizon.</div></li>`;
   }
@@ -224,6 +276,24 @@
         }).join('')
       : '<div class="ck-empty">No alerts recorded yet.</div>';
   }
+  function renderAlertHistory() {
+    const rows = (alerts ?? []).slice(0, 100);
+    $('ck-hist-table').innerHTML = rows.length ? `
+      <tr><th>DATE</th><th>KIND</th><th>CONDITION</th><th>DELIVERED</th></tr>
+      ${rows.map((a) => `<tr>
+        <td>${a.date}</td><td class="na">${esc(a.kind)}/${esc(a.key)}</td>
+        <td style="text-align:left;white-space:normal">${esc(a.message)}</td>
+        <td class="na">${(a.delivered ?? []).join('+') || 'logged'}</td></tr>`).join('')}`
+      : '<tr><td>no alerts recorded</td></tr>';
+  }
+  $('ck-hist-toggle').addEventListener('click', () => {
+    const d = $('ck-alert-history');
+    const open = d.hidden; d.hidden = !open;
+    $('ck-hist-toggle').setAttribute('aria-expanded', String(open));
+    $('ck-hist-toggle').textContent = open ? 'HIDE ALERT HISTORY ▴' : 'SHOW ALERT HISTORY ▾';
+    if (open) renderAlertHistory();
+  });
+
   function priority(a) {
     if (a.kind === 'regime' || a.kind === 'divergence') return 'WARNING';
     if (a.kind === 'response_gap' || a.kind === 'state') return 'WATCH';

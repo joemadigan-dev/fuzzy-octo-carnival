@@ -21,10 +21,14 @@
     <span class="ck-b2">TRACKER</span>
   </div>
   <div class="ck-meta">
+    <button class="ck-health" id="ck-health" data-state="" aria-expanded="false" aria-controls="ck-health-detail">
+      <i></i><span id="ck-health-state">—</span>
+    </button>
     <span id="ck-asof">—</span>
     <a href="/" class="ck-link">conditions barometer →</a>
   </div>
 </header>
+<div class="ck-health-detail" id="ck-health-detail" hidden></div>
 
 <div class="ck-outage" id="ck-outage" hidden></div>
 
@@ -37,6 +41,8 @@
     <div class="ck-card ck-skel" id="card-credit"></div>
     <div class="ck-card ck-skel" id="card-liquidity"></div>
   </section>
+
+  <p class="ck-setup" id="ck-setup"></p>
 
   <!-- 2. WHAT CHANGED -->
   <section class="ck-panel" aria-label="What changed">
@@ -55,8 +61,17 @@
 
   <!-- 3. ACTIVE ALERTS -->
   <section class="ck-panel" aria-label="Active alerts">
-    <div class="ck-panel-head"><h2>ACTIVE ALERTS</h2><span class="ck-count" id="ck-alert-count"></span></div>
+    <div class="ck-panel-head">
+      <h2>ACTIVE ALERTS</h2><span class="ck-count" id="ck-alert-count"></span>
+      <button class="ck-more" id="ck-hist-toggle" aria-expanded="false" aria-controls="ck-alert-history"
+        style="margin-left:auto">SHOW ALERT HISTORY ▾</button>
+    </div>
     <div id="ck-alerts"></div>
+    <div id="ck-alert-history" hidden>
+      <p class="ck-note" style="margin-top:10px">Full audit trail, every row as recorded. Conditions logged before
+        alert latching was added repeat across dates; nothing has been deleted.</p>
+      <div class="ck-table-wrap"><table class="ck-table" id="ck-hist-table"></table></div>
+    </div>
   </section>
 
   <!-- 4. HUNTER TARGETS -->
