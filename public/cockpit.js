@@ -201,7 +201,17 @@
   // ── 3. ALERTS ───────────────────────────────────────────────────────
   function renderAlerts() {
     const box = $('ck-alerts');
-    const rows = (alerts ?? []).slice(0, 12);
+    // One row per condition, most recent first. Alerts logged before the
+    // latch was added repeat the same condition on many dates; this panel
+    // answers "what is true now", so it collapses them rather than showing
+    // one condition six times. Nothing is deleted — the full log keeps
+    // every row.
+    const seen = new Set();
+    const rows = (alerts ?? []).filter((a) => {
+      const id = `${a.kind}:${a.key}`;
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    }).slice(0, 12);
     $('ck-alert-count').textContent = rows.length ? `${rows.length} most recent` : '';
     box.innerHTML = rows.length
       ? rows.map((a) => {

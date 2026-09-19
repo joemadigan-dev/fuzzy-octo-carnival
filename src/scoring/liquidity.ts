@@ -112,7 +112,7 @@ export function liquidityCard(m: Map<string, Point[]>): LiquidityResult {
 
   return {
     level, regime, us10y: us10, us2y: us2,
-    curve: us10 !== null && us2 !== null ? (us10 - us2) * 100 : null,
+    curve: us10 !== null && us2 !== null ? Math.round((us10 - us2) * 100 * 10) / 10 : null,
     walcl13wPct, walcl13wBn, walcl4wBn, usdTrend, creditWord, rateLeg, qe, notes,
   };
 }

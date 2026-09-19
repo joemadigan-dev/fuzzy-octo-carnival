@@ -1,8 +1,11 @@
 // Alerts + decision-journal review. Runs inside the cron job.
 //
 // Alerts: the states worth catching happen on days nobody is looking.
-// The alerts table's PRIMARY KEY (date, kind, key) IS the rate limit —
-// at most one alert per state per day, by construction. Delivery is
+// Two dedup mechanisms, because one is not enough. The alerts table's
+// PRIMARY KEY (date, kind, key) allows at most one alert per state per
+// day. On top of that, LEVEL conditions carry a latch in `meta` so they
+// fire once on becoming true and stay silent until they clear — without
+// it, a condition that simply persists re-fires every single day. Delivery is
 // webhook (ALERT_WEBHOOK_URL) and/or email (RESEND_API_KEY +
 // ALERT_EMAIL_TO/FROM); with neither configured, alerts still land in the
 // table and surface on the page — never silently dropped.
@@ -12,6 +15,8 @@ import type { Point } from '../sources/types.ts';
 import type { BarometerResult } from '../compute/barometer.ts';
 import { isoDaysAgo, valueOnOrBefore } from '../compute/stats.ts';
 import type { Env } from './index.ts';
+import TH from '../../config/thresholds.json' with { type: 'json' };
+import TG from '../../config/hunter_targets.json' with { type: 'json' };
 
 const RESPONSE_GAP_ALERT = 2.0;
 const PCTL_HI = 95;
@@ -22,6 +27,12 @@ interface Candidate {
   key: string;
   message: string; // states what changed, what drove it, what it was before
   detail?: unknown;
+  /** True for LEVEL conditions ("HY above 6%") as opposed to EDGE events
+   *  ("regime changed today"). A stateful candidate fires once when the
+   *  condition becomes true and stays silent while it remains true — the
+   *  (date, kind, key) primary key alone cannot do that, because the date
+   *  differs every day and the same condition re-fires indefinitely. */
+  stateful?: boolean;
 }
 
 export async function runAlerts(
@@ -70,10 +81,14 @@ export async function runAlerts(
     const now = pctile(pts, pts.length - 1);
     const was = pctile(pts, pts.length - 2);
     const v = pts[pts.length - 1];
-    if (now >= PCTL_HI && was < PCTL_HI) {
-      candidates.push({ kind: 'input95', key: `${def.id}:hi`, message: `${def.label} crossed its ${PCTL_HI}th percentile — ${v.value.toFixed(2)} on ${v.date} (was ${ordinal(was)} pct the day before).` });
-    } else if (now <= PCTL_LO && was > PCTL_LO) {
-      candidates.push({ kind: 'input95', key: `${def.id}:lo`, message: `${def.label} crossed its ${PCTL_LO}th percentile — ${v.value.toFixed(2)} on ${v.date} (was ${ordinal(was)} pct the day before).` });
+    // Evaluated on the LEVEL and marked stateful. The previous version
+    // fired on a day-over-day transition, which a series that has stopped
+    // advancing re-satisfies every single run: the same HY OAS alert fired
+    // six times over twelve days from one unchanged observation.
+    if (now >= PCTL_HI) {
+      candidates.push({ kind: 'input95', key: `${def.id}:hi`, stateful: true, message: `${def.label} is at or above its ${PCTL_HI}th percentile — ${v.value.toFixed(2)} on ${v.date} (${ordinal(now)} pct).` });
+    } else if (now <= PCTL_LO) {
+      candidates.push({ kind: 'input95', key: `${def.id}:lo`, stateful: true, message: `${def.label} is at or below its ${PCTL_LO}th percentile — ${v.value.toFixed(2)} on ${v.date} (${ordinal(now)} pct).` });
     }
   }
 
@@ -133,20 +148,146 @@ export async function runAlerts(
     });
   }
 
-  // insert (PK dedupes = one per state per day) and deliver the new ones
+  // § 17 cockpit thresholds, all stateful: these are levels, not events.
+  candidates.push(...cockpitAlerts(seriesMap));
+
+  log.push(...await fire(env, candidates, today, nowIso));
+  return log;
+}
+
+/** Insert, dedupe and deliver.
+ *
+ *  Two mechanisms, because one is not enough. The (date, kind, key) primary
+ *  key stops the same alert appearing twice in one day. It does NOT stop a
+ *  LEVEL condition re-firing tomorrow, and the day after, for as long as it
+ *  holds — which is how one unchanged HY OAS observation produced six
+ *  identical alerts over twelve days. So a stateful candidate also carries a
+ *  latch in `meta`: it fires on the false→true edge and stays silent until
+ *  the condition clears. Keys that are no longer active are unlatched here,
+ *  which is what re-arms them. */
+async function fire(env: Env, candidates: Candidate[], today: string, nowIso: string): Promise<string[]> {
+  const log: string[] = [];
+  const rows = await env.DB.prepare("SELECT key FROM meta WHERE key LIKE 'alert_on:%'").all<{ key: string }>();
+  const latched = new Set((rows.results ?? []).map((r) => r.key.slice(9)));
+  const activeNow = new Set(candidates.filter((c) => c.stateful).map((c) => `${c.kind}:${c.key}`));
+
   for (const c of candidates) {
+    const id = `${c.kind}:${c.key}`;
+    if (c.stateful && latched.has(id)) continue;  // condition already reported
+
     const res = await env.DB.prepare(
       `INSERT INTO alerts (date, kind, key, message, detail, delivered, created_at)
        VALUES (?,?,?,?,?,NULL,?) ON CONFLICT(date, kind, key) DO NOTHING`,
     ).bind(today, c.kind, c.key, c.message, JSON.stringify(c.detail ?? null), nowIso).run();
-    const isNew = (res.meta?.changes ?? 0) > 0;
-    if (!isNew) continue;
+    if ((res.meta?.changes ?? 0) === 0) continue;
+
+    if (c.stateful) {
+      await env.DB.prepare(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      ).bind(`alert_on:${id}`, today).run();
+    }
     const delivered = await deliver(env, c);
     await env.DB.prepare('UPDATE alerts SET delivered = ? WHERE date = ? AND kind = ? AND key = ?')
       .bind(JSON.stringify(delivered), today, c.kind, c.key).run();
-    log.push(`alert [${c.kind}/${c.key}] via ${delivered.join('+') || 'log-only'}: ${c.message}`);
+    log.push(`alert [${id}] via ${delivered.join('+') || 'log-only'}: ${c.message}`);
+  }
+
+  // re-arm anything that has cleared
+  for (const id of latched) {
+    if (activeNow.has(id)) continue;
+    await env.DB.prepare('DELETE FROM meta WHERE key = ?').bind(`alert_on:${id}`).run();
+    log.push(`alert cleared [${id}] — condition no longer holds, re-armed`);
   }
   return log;
+}
+
+/** The thresholds named in section 17 of the brief, read straight from
+ *  config/thresholds.json. All level conditions, so all latched. */
+function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
+  const A = TH.alerts;
+  const out: Candidate[] = [];
+  const last = (id: string) => { const p = m.get(id); return p?.length ? p[p.length - 1] : null; };
+  const chg = (id: string, days: number) => {
+    const p = m.get(id); if (!p?.length) return null;
+    const end = p[p.length - 1];
+    const then = valueOnOrBefore(p, isoDaysAgo(end.date, days));
+    return !then || then.date >= end.date ? null : end.value - then.value;
+  };
+  const pctChg = (id: string, days: number) => {
+    const p = m.get(id); if (!p?.length) return null;
+    const end = p[p.length - 1];
+    const then = valueOnOrBefore(p, isoDaysAgo(end.date, days));
+    return !then || then.date >= end.date || Math.abs(then.value) < 1e-12
+      ? null : ((end.value - then.value) / Math.abs(then.value)) * 100;
+  };
+
+  const spx6 = pctChg('spx', 182);
+  if (spx6 !== null && spx6 >= A.ret6m_pct) {
+    out.push({ kind: 'meltup', key: 'ret6m', stateful: true,
+      message: `S&P six-month return +${spx6.toFixed(1)}% — at or past the ${A.ret6m_pct}% melt-up alert level.` });
+  }
+
+  const t10 = last('us10y');
+  if (t10 && t10.value >= A.us10y_pct) {
+    out.push({ kind: 'rates', key: 'us10y', stateful: true,
+      message: `10Y Treasury ${t10.value.toFixed(2)}% on ${t10.date} — at or above ${A.us10y_pct}%.` });
+  }
+
+  const hy = last('hy_oas');
+  if (hy && hy.value >= A.hy_level_pct) {
+    out.push({ kind: 'credit', key: 'hy_level', stateful: true,
+      message: `HY OAS ${hy.value.toFixed(2)}% on ${hy.date} — at or above the ${A.hy_level_pct}% stress level.` });
+  }
+  const hyRoc = chg('hy_oas', 28);
+  if (hyRoc !== null && hyRoc * 100 >= A.hy_roc20_bp) {
+    out.push({ kind: 'credit', key: 'hy_roc20', stateful: true,
+      message: `HY OAS widened ${(hyRoc * 100).toFixed(0)}bp over 20 sessions — past the ${A.hy_roc20_bp}bp alert level.` });
+  }
+
+  const vix = last('vix');
+  if (vix && vix.value >= A.vix_level) {
+    out.push({ kind: 'vol', key: 'vix', stateful: true,
+      message: `VIX ${vix.value.toFixed(1)} on ${vix.date} — at or above ${A.vix_level}.` });
+  }
+
+  // S&P drawdown from its trailing one-year peak
+  const spx = m.get('spx');
+  if (spx?.length) {
+    const end = spx[spx.length - 1];
+    const from = isoDaysAgo(end.date, 365);
+    let peak = -Infinity;
+    for (const p of spx) { if (p.date >= from && p.date <= end.date && p.value > peak) peak = p.value; }
+    if (Number.isFinite(peak) && peak > 0) {
+      const dd = ((end.value - peak) / peak) * 100;
+      if (dd <= A.drawdown_pct) {
+        out.push({ kind: 'internals', key: 'drawdown', stateful: true,
+          message: `S&P ${dd.toFixed(1)}% from its one-year peak — past the ${A.drawdown_pct}% alert level.` });
+      }
+    }
+  }
+
+  const walcl4 = chg('walcl', 28); // stored in $tn
+  if (walcl4 !== null && walcl4 * 1000 >= A.walcl_4w_bn) {
+    out.push({ kind: 'liquidity', key: 'walcl_4w', stateful: true,
+      message: `Fed balance sheet +$${(walcl4 * 1000).toFixed(0)}bn over four weeks — past the $${A.walcl_4w_bn}bn alert level.` });
+  }
+
+  // Hunter targets coming within range
+  for (const [id, label, target] of [
+    ['spx', 'S&P 500', TG.meltup.sp500.target], ['dow', 'Dow Jones', TG.meltup.dow.target],
+    ['nasdaq', 'NASDAQ', TG.meltup.nasdaq.target], ['rut', 'Russell 2000', TG.meltup.russell2000.target],
+    ['gold', 'Gold', TG.meltup.gold.target], ['silver', 'Silver', TG.meltup.silver.target],
+  ] as [string, string, number][]) {
+    const l = last(id);
+    if (!l || l.value <= 0) continue;
+    const dist = ((target - l.value) / l.value) * 100;
+    if (dist >= 0 && dist <= A.target_within_pct) {
+      out.push({ kind: 'target', key: id, stateful: true,
+        message: `${label} is ${dist.toFixed(1)}% from its Hunter target of ${target.toLocaleString('en-US')} (${l.value.toFixed(0)} on ${l.date}) — inside the ${A.target_within_pct}% alert band.` });
+    }
+  }
+
+  return out;
 }
 
 async function deliver(env: Env, c: Candidate): Promise<string[]> {
