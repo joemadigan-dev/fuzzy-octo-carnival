@@ -101,10 +101,25 @@ export function financialRows(facts: CompanyFacts, ticker: string): {
   return { financials, missing };
 }
 
+/** A schema that has not been migrated yet is a KNOWN state, not a fault.
+ *  Code reaches production ahead of its migration routinely — they are
+ *  two separate operations against two separate systems — and reporting
+ *  that as a failure buries it among real ones and makes the run look
+ *  broken when it is merely waiting. */
+const isMissingTable = (e: unknown) => /no such table/i.test(String(e));
+
 export async function ingestSec(env: Env, nowIso: string, nowMs: number): Promise<string[]> {
   const log: string[] = [];
-  const res = await env.DB.prepare('SELECT ticker, facts_hash, checked_at, status FROM company_filings')
-    .all<FilingRow>();
+  let res: { results?: FilingRow[] };
+  try {
+    res = await env.DB.prepare('SELECT ticker, facts_hash, checked_at, status FROM company_filings')
+      .all<FilingRow>();
+  } catch (e) {
+    if (isMissingTable(e)) {
+      return ['sec: schema 0006 not applied yet — skipping ingestion (no data written, nothing lost)'];
+    }
+    throw e;
+  }
   const existing = new Map((res.results ?? []).map((r) => [r.ticker, r]));
   const due = dueCompanies(res.results ?? [], nowMs);
 
@@ -144,6 +159,10 @@ export async function ingestSec(env: Env, nowIso: string, nowMs: number): Promis
       );
     } catch (e) {
       const msg = String(e).slice(0, 300);
+      if (isMissingTable(e)) {
+        log.push(`sec ${company.ticker}: schema 0006 not applied yet — skipping`);
+        continue;
+      }
       await env.DB.prepare(
         `INSERT INTO company_filings (ticker, cik, checked_at, status, note)
          VALUES (?,?,?,'failed',?)
