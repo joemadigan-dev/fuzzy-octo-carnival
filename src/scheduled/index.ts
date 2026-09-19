@@ -410,7 +410,22 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   mark('wall_state');
   await saveProgress(false);
 
-  // ── 5. THE BAROMETER: two layers + backtest + diagnostics ────────────
+  // ── 5. EXECUTIVE COCKPIT ─────────────────────────────────────────────
+  // Runs BEFORE the barometer, not after. Being outside its try/catch is
+  // not enough: an isolate killed inside computeBarometer takes everything
+  // downstream with it, and twice now that has left the cockpit — the
+  // first screen, and the cheaper of the two by far — with nothing to show
+  // because the most expensive stage died ahead of it. Order by what must
+  // survive, not by what was written first. The cockpit needs only
+  // seriesMap, which is complete by here.
+  try {
+    log.push(...await runCockpit(env, seriesMap, nowIso));
+  } catch (e) {
+    log.push(`cockpit: FAILED — ${e}`);
+  }
+  mark('cockpit');
+
+  // ── 6. THE BAROMETER: two layers + backtest + diagnostics ────────────
   try {
     const result = computeBarometer(seriesMap);
     mark('barometer');
@@ -540,7 +555,7 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     const a = result.detail.altitude['2y'];
     log.push(`barometer: pressure=${p.score} ${p.regime} · altitude=${a.score} ${a.regime} · changes=${result.changes.length} · corrFlags=${result.diagnostics.corr.flagged.length} · analogues=${result.analogues.length}`);
 
-    // ── 6. accountability: alerts + journal review ───────────────────
+    // ── 7. accountability: alerts + journal review ───────────────────
     try {
       log.push(...await runAlerts(env, result, seriesMap, prevFlags, currFlags, nowIso));
     } catch (e) {
@@ -555,17 +570,6 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     log.push(`barometer: FAILED — ${e}`);
   }
   mark('accountability');
-
-  // ── 7. executive cockpit ─────────────────────────────────────────────
-  // Deliberately OUTSIDE the barometer's try/catch: the cockpit is the
-  // first screen and must survive a barometer failure, since it shares
-  // none of its machinery.
-  try {
-    log.push(...await runCockpit(env, seriesMap, nowIso));
-  } catch (e) {
-    log.push(`cockpit: FAILED — ${e}`);
-  }
-  mark('cockpit');
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
