@@ -108,6 +108,79 @@
     "supercycle_outperformance_pct": 15
   },
 
+  "ai_capital": {
+    "_comment": [
+      "V2. The AI Capital Stress Score: five components, each worth at most 1.",
+      "",
+      "THESE NUMBERS MUST BE FALSIFIABLE. The score is not built to confirm",
+      "that an AI capital bubble exists — it is built so that the Noble/Chanos",
+      "thesis can be shown to be WRONG by the same data that could show it to",
+      "be right. So every component has a `contradicts` level as well as a",
+      "stress level, and a company comfortably inside the contradicting level",
+      "is reported as evidence against the thesis rather than as silence.",
+      "",
+      "Levels are fractions unless named otherwise: 0.35 means 35%."
+    ],
+
+    "intensity": {
+      "_comment": "Capex as a share of revenue, and how fast it is growing relative to revenue. A build-out growing far faster than the revenue it serves is the precondition for the thesis, not proof of it.",
+      "capex_to_revenue_elevated": 0.25,
+      "capex_to_revenue_extreme": 0.40,
+      "capex_growth_gap_elevated": 0.25,
+      "capex_growth_gap_extreme": 0.60,
+      "capex_to_revenue_contradicts": 0.15
+    },
+
+    "funding": {
+      "_comment": "Capex against the operating cash flow available to pay for it. Above 1 the programme is larger than the cash the business generates and is being financed from somewhere else.",
+      "capex_to_ocf_elevated": 0.80,
+      "capex_to_ocf_extreme": 1.00,
+      "capex_to_ocf_contradicts": 0.50
+    },
+
+    "returns": {
+      "_comment": [
+        "The core of the thesis. Incremental operating income per additional",
+        "dollar of capital. A falling or thin incremental return while spending",
+        "accelerates is the claim; a healthy one is the refutation.",
+        "Benchmarked against a mid-teens cost of capital rather than zero:",
+        "capital earning 4% is destroying value even though 4% is positive."
+      ],
+      "incr_return_thin": 0.10,
+      "incr_return_negative": 0.0,
+      "incr_return_contradicts": 0.20,
+      "incr_fcf_negative": 0.0
+    },
+
+    "financing": {
+      "_comment": "Whether the build-out is shifting from surplus cash onto borrowed money. This is the component that connects the capital cycle to credit at all.",
+      "net_debt_to_ocf_elevated": 1.5,
+      "net_debt_to_ocf_extreme": 3.0,
+      "net_debt_to_ocf_contradicts": 0.5,
+      "net_debt_rise_elevated_bn": 25
+    },
+
+    "divergence": {
+      "_comment": [
+        "Supplier against buyers. Nvidia's revenue is partly the mirror image",
+        "of hyperscaler capex, so the two growing together is the normal state",
+        "of a capital cycle. The signal is DIVERGENCE: the supplier still",
+        "booking growth while the buyers' spending decelerates is the classic",
+        "shape of a cycle turning, and is what would show up first."
+      ],
+      "divergence_gap_elevated": 0.30,
+      "divergence_gap_extreme": 0.60,
+      "aligned_contradicts": 0.15
+    },
+
+    "status": {
+      "_comment": "The one-line AI CAPITAL status under Market Setup. Score bands, 0-5.",
+      "watch": 1.5,
+      "elevated": 2.5,
+      "stress": 3.5
+    }
+  },
+
   "alerts": {
     "_comment": "Section 17. The alerts table PK (date, kind, key) is the dedup mechanism.",
     "target_within_pct": 10,

@@ -243,6 +243,20 @@ export function companyMetrics(ticker: string, concepts: Record<string, Series>)
     const pRev = ttm(revenue, prior, 'Revenue');
     const pCapex = ttm(capex, prior, 'Capital expenditure');
 
+    // The year-earlier levels are published alongside the current ones, not
+    // just consumed here. Group readings — what the deployers spend as a
+    // SHARE of what they earn — have to be computed by summing the dollars
+    // and then dividing, not by averaging five companies' ratios: an
+    // equal-weighted mean of Oracle's 105% with Amazon's 22% says the group
+    // spends 46% of revenue when the group actually spends 32%. Both are
+    // arithmetic; only one answers the question, and the wrong one reads as
+    // a much more dramatic finding than the data supports.
+    measures.ttm_revenue_prior = pRev;
+    measures.ttm_capex_prior = pCapex;
+    measures.ttm_ocf_prior = pOcf;
+    measures.ttm_opinc_prior = pOpinc;
+    measures.ttm_fcf_prior = pFcf;
+
     // THE CAPITAL BASE. Stated as what it is — the physical asset base —
     // and not called invested capital, because the textbook
     // debt-plus-equity-less-cash figure needs shareholders' equity, which
