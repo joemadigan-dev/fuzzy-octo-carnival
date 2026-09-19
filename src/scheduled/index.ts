@@ -16,6 +16,7 @@ import { computeBaseRates } from '../compute/baserates.ts';
 import { computeImpulseSweep } from '../compute/impulse.ts';
 import { runAlerts, reviewJournal } from './accountability.ts';
 import { runCockpit } from './cockpit.ts';
+import { ingestSec } from './sec.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
 
 export interface Env {
@@ -609,6 +610,22 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     log.push(`journal review: FAILED — ${e}`);
   }
   mark('accountability');
+
+  // ── 8. SEC company fundamentals ──────────────────────────────────────
+  // LAST, deliberately. This stage downloads and parses a 3–5MB XBRL
+  // document, which is the largest single piece of work in the run and
+  // the newest — so it goes where a CPU overrun or an isolate kill can
+  // only cost this stage, never the wall, the cockpit, the barometer or
+  // the alerts. It also needs nothing from any of them.
+  //
+  // Quarterly data on an hourly cron: one company per run, re-checked
+  // roughly daily, and an unchanged extraction writes nothing.
+  try {
+    log.push(...await ingestSec(env, nowIso, nowMs));
+  } catch (e) {
+    log.push(`sec: FAILED — ${e}`);
+  }
+  mark('sec');
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
