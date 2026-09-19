@@ -5,6 +5,7 @@
 
 import type { Point } from '../sources/types.ts';
 import { buildCockpit, type Cockpit } from '../scoring/index.ts';
+import { systemHealth } from '../scoring/health.ts';
 import type { Phase } from '../scoring/phase.ts';
 import type { Snapshot } from '../scoring/whatchanged.ts';
 import type { Env } from './index.ts';
@@ -14,7 +15,17 @@ const HISTORY_DAYS = 45;
 /** Candidate phases inspected for the persistence rule. */
 const CANDIDATE_WINDOW = 10;
 
-export async function runCockpit(env: Env, seriesMap: Map<string, Point[]>, nowIso: string): Promise<string[]> {
+export interface CockpitOpts {
+  runCompleted: boolean;
+  lastFailedStage: string | null;
+  fetchFailed: string[];
+  lastRun: string | null;
+  lastBarometer: string | null;
+}
+
+export async function runCockpit(
+  env: Env, seriesMap: Map<string, Point[]>, nowIso: string, opts: CockpitOpts,
+): Promise<string[]> {
   const log: string[] = [];
   const today = nowIso.slice(0, 10);
 
@@ -40,6 +51,21 @@ export async function runCockpit(env: Env, seriesMap: Map<string, Point[]>, nowI
 
   const c = buildCockpit(seriesMap, nowIso, { phase: priorPhase, candidates, history });
 
+  // Health is assembled here because this is where the run's own outcome
+  // and the loaded series are both in hand. It rides the cockpit payload
+  // rather than needing its own table or request.
+  const health = systemHealth({
+    nowIso,
+    lastRun: opts.lastRun,
+    lastCockpit: nowIso,
+    lastBarometer: opts.lastBarometer,
+    runCompleted: opts.runCompleted,
+    lastFailedStage: opts.lastFailedStage,
+    seriesMap,
+    fetchFailed: opts.fetchFailed,
+  });
+  const payload = { ...c, health };
+
   await env.DB.prepare(
     `INSERT INTO cockpit_history
        (date, computed_at, phase, candidate_phase, phase_settled, meltup, bust,
@@ -58,7 +84,7 @@ export async function runCockpit(env: Env, seriesMap: Map<string, Point[]>, nowI
     today, nowIso, c.phase.phase, c.phase.candidate, c.phase.settled ? 1 : 0,
     c.meltup.score, c.bust.score, c.bust.vulnerability, c.bust.onset,
     c.credit.score, c.credit.stage, c.credit.systemic ? 1 : 0,
-    c.liquidity.regime, c.liquidity.level, JSON.stringify(c),
+    c.liquidity.regime, c.liquidity.level, JSON.stringify(payload),
   ).run();
 
   if (priorPhase && priorPhase !== c.phase.phase) {
@@ -71,6 +97,7 @@ export async function runCockpit(env: Env, seriesMap: Map<string, Point[]>, nowI
     log.push(`cockpit: PHASE ${priorPhase} → ${c.phase.phase} (held ${c.phase.heldDays}d)`);
   }
 
+  log.push(`cockpit health: ${health.state} — ${health.summary}`);
   log.push(
     `cockpit: ${c.phase.phase}${c.phase.settled ? '' : ` (candidate ${c.phase.candidate}, ${c.phase.heldDays}/${c.phase.persistDays}d)`}`
     + ` · melt-up ${c.meltup.score}/5 · bust ${c.bust.score}/5 (vuln ${c.bust.vulnerability} / onset ${c.bust.onset})`

@@ -10,7 +10,7 @@ import { KPIS, BACKFILL_START, type KpiDef } from '../registry/kpis.ts';
 import { SOURCES, type Point } from '../sources/index.ts';
 import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
-import { computeBarometer } from '../compute/barometer.ts';
+import { computeBarometer, barometerStages } from '../compute/barometer.ts';
 import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { computeBaseRates } from '../compute/baserates.ts';
 import { computeImpulseSweep } from '../compute/impulse.ts';
@@ -207,6 +207,8 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // advancing its date, and the barometer's own reading rolls forward with
   // the calendar even when no input moves. HEAVY_MAX_IDLE_HOURS bounds how
   // stale the computed layer can get regardless of what the sources do.
+  const lastRunRow = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run'")
+    .first<{ value: string }>();
   const [lastHeavyRow, pendingRow] = await Promise.all([
     env.DB.prepare("SELECT value FROM meta WHERE key = 'last_heavy'").first<{ value: string }>(),
     env.DB.prepare("SELECT value FROM meta WHERE key = 'heavy_pending'").first<{ value: string }>(),
@@ -419,7 +421,18 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // survive, not by what was written first. The cockpit needs only
   // seriesMap, which is complete by here.
   try {
-    log.push(...await runCockpit(env, seriesMap, nowIso));
+    const prevLog = await env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run_log'")
+      .first<{ value: string }>();
+    const prev = prevLog?.value ? JSON.parse(prevLog.value) as { done?: boolean; marks?: string[] } : null;
+    const prevBaro = await env.DB.prepare('SELECT computed_at FROM signal_state WHERE id = 1')
+      .first<{ computed_at: string }>();
+    log.push(...await runCockpit(env, seriesMap, nowIso, {
+      runCompleted: prev?.done !== false,
+      lastFailedStage: prev?.done === false ? (prev.marks?.[prev.marks.length - 1]?.split(' ')[0] ?? null) : null,
+      fetchFailed: log.filter((l) => l.includes('FETCH FAILED')).map((l) => l.split(':')[0]),
+      lastRun: lastRunRow?.value ?? null,
+      lastBarometer: prevBaro?.computed_at ?? null,
+    }));
   } catch (e) {
     log.push(`cockpit: FAILED — ${e}`);
   }
@@ -428,6 +441,11 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   // ── 6. THE BAROMETER: two layers + backtest + diagnostics ────────────
   try {
     const result = computeBarometer(seriesMap);
+    // Fold the barometer's own sub-stages into the run log, so a completed
+    // run records where its time went and a reader can compare a slow run
+    // against a normal one. No extra D1 work: these ride the meta write
+    // that saveProgress already performs.
+    for (const st of result.stages) marks.push(`  barometer.${st.name} ${(st.ms / 1000).toFixed(1)}s${st.note ? ` (${st.note})` : ''}`);
     mark('barometer');
     const stmts: D1PreparedStatement[] = [];
 
@@ -567,7 +585,10 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       log.push(`journal review: FAILED — ${e}`);
     }
   } catch (e) {
+    const got = barometerStages();
     log.push(`barometer: FAILED — ${e}`);
+    log.push(`barometer stages completed before the failure: ${got.length ? got.map((x) => x.name).join(' → ') : 'none'}`);
+    for (const st of got) marks.push(`  barometer.${st.name} ${(st.ms / 1000).toFixed(1)}s`);
   }
   mark('accountability');
 

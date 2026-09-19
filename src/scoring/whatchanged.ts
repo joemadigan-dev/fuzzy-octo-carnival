@@ -17,12 +17,27 @@ import { latest } from './common.ts';
 export type Horizon = 'day' | 'week' | 'month';
 const DAYS: Record<Horizon, number> = { day: 1, week: 7, month: 30 };
 
+/** Ordered by model importance. The ranking is by CATEGORY first and
+ *  magnitude only within a category, which is the whole point: a stage
+ *  change outranks any price move however large. */
+export type ChangeKind =
+  | 'regime'        // adopted regime or phase changed
+  | 'stage'         // Credit Canary stage, liquidity regime
+  | 'threshold'     // a named critical level was crossed
+  | 'score'         // a 0-5 score moved materially
+  | 'acceleration'  // rate of change itself changed
+  | 'move';         // ordinary market move
+
+export const KIND_WEIGHT: Record<ChangeKind, number> = {
+  regime: 100, stage: 90, threshold: 78, score: 62, acceleration: 48, move: 20,
+};
+
 export interface Change {
   horizon: Horizon;
   weight: number;       // model importance, higher first
   headline: string;
   detail: string;
-  kind: 'score' | 'threshold' | 'move';
+  kind: ChangeKind;
 }
 
 /** Snapshot of the scores as stored in cockpit_history. */
@@ -74,16 +89,19 @@ export function whatChanged(
     // ── score and stage changes outrank everything ──────────────────
     if (prev) {
       if (prev.phase && now.phase && prev.phase !== now.phase) {
-        changes.push({ horizon, weight: 100, kind: 'score',
+        changes.push({ horizon, weight: KIND_WEIGHT.regime, kind: 'regime',
           headline: `Phase changed: ${prev.phase} → ${now.phase}`,
           detail: 'The master phase model adopted a new phase after its persistence requirement was met.' });
       }
       if (prev.credit_stage && now.credit_stage && prev.credit_stage !== now.credit_stage) {
-        changes.push({ horizon, weight: 95, kind: 'score',
+        changes.push({ horizon, weight: KIND_WEIGHT.stage, kind: 'stage',
           headline: `Credit Canary: ${prev.credit_stage} → ${now.credit_stage}`,
           detail: `Score ${fmtN(prev.credit)} → ${fmtN(now.credit)} of 5.` });
       }
-      for (const [key, label, w] of [['credit', 'Credit Canary', 90], ['bust', 'Bust Risk', 85], ['meltup', 'Melt-Up Score', 80]] as const) {
+      for (const [key, label, w] of [
+        ['credit', 'Credit Canary', KIND_WEIGHT.score + 3],
+        ['bust', 'Bust Risk', KIND_WEIGHT.score + 2],
+        ['meltup', 'Melt-Up Score', KIND_WEIGHT.score + 1]] as const) {
         const a = prev[key as keyof Snapshot] as number | null;
         const b = now[key as keyof Snapshot] as number | null;
         if (a === null || b === null || Math.abs(b - a) < 0.5) continue;
@@ -92,7 +110,7 @@ export function whatChanged(
           detail: b > a ? 'Score rose — more of the configuration is present.' : 'Score fell — part of the configuration has gone.' });
       }
       if (prev.liquidity_regime && now.liquidity_regime && prev.liquidity_regime !== now.liquidity_regime) {
-        changes.push({ horizon, weight: 75, kind: 'score',
+        changes.push({ horizon, weight: KIND_WEIGHT.stage - 5, kind: 'stage',
           headline: `Liquidity regime: ${prev.liquidity_regime} → ${now.liquidity_regime}`,
           detail: 'Fed balance-sheet trend crossed a configured band.' });
       }
@@ -111,7 +129,7 @@ export function whatChanged(
 
       const crossed = crossing(t.id, then.value, end.value);
       if (crossed) {
-        changes.push({ horizon, weight: t.weight + 20, kind: 'threshold',
+        changes.push({ horizon, weight: KIND_WEIGHT.threshold + t.weight / 10, kind: 'threshold',
           headline: crossed,
           detail: `${t.label} ${then.value.toFixed(t.dp)}${t.unit} → ${end.value.toFixed(t.dp)}${t.unit} since ${then.date}.` });
         continue;
@@ -120,11 +138,31 @@ export function whatChanged(
         ? Math.abs(moveBp) >= MATERIAL[horizon].bp
         : Math.abs(pct) >= MATERIAL[horizon].pct;
       if (!material) continue;
-      changes.push({ horizon, weight: t.weight, kind: 'move',
+      changes.push({ horizon, weight: KIND_WEIGHT.move + t.weight / 10, kind: 'move',
         headline: t.bp
           ? `${t.label} ${moveBp > 0 ? 'widened' : 'narrowed'} ${Math.abs(moveBp).toFixed(0)}bp`
           : `${t.label} ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`,
         detail: `${then.value.toFixed(t.dp)}${t.unit} → ${end.value.toFixed(t.dp)}${t.unit} since ${then.date}.` });
+    }
+
+    // acceleration: the rate of change itself changing, which is a
+    // different event from a large move and ranks between score and move
+    for (const [id, label] of [['spx', 'S&P 500'], ['hy_oas', 'HY OAS']] as const) {
+      const pts = m.get(id);
+      if (!pts?.length) continue;
+      const end = pts[pts.length - 1];
+      const half = Math.max(1, Math.round(DAYS[horizon] / 2));
+      const mid = valueOnOrBefore(pts, isoDaysAgo(end.date, half));
+      const start = valueOnOrBefore(pts, cutoff);
+      if (!mid || !start || start.date >= mid.date || mid.date >= end.date) continue;
+      const r1 = mid.value - start.value;     // first half
+      const r2 = end.value - mid.value;       // second half
+      if (Math.abs(r1) < 1e-9) continue;
+      const faster = Math.abs(r2) > Math.abs(r1) * 1.75 && Math.sign(r2) === Math.sign(r1);
+      if (!faster) continue;
+      changes.push({ horizon, weight: KIND_WEIGHT.acceleration, kind: 'acceleration',
+        headline: `${label} is accelerating ${r2 > 0 ? 'higher' : 'lower'}`,
+        detail: `the second half of this ${horizon} moved ${Math.abs(r2 / r1).toFixed(1)}x the first half.` });
     }
 
     changes.sort((a, b) => b.weight - a.weight);

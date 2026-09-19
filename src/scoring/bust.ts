@@ -18,6 +18,7 @@ import type { Point } from '../sources/types.ts';
 import thresholds from '../../config/thresholds.json' with { type: 'json' };
 import { build, change, drawdown, latest, noData, pctChange, type Component, type Score } from './common.ts';
 import type { CreditResult } from './credit.ts';
+import { asPercent } from './units.ts';
 
 const T = thresholds.bust;
 
@@ -43,12 +44,13 @@ export function bustRisk(m: Map<string, Point[]>, credit: CreditResult): BustRes
     const parts: string[] = [];
     let d = 0;
     if (mcap) {
-      // eq_gdp is stored as a RATIO (corp equities / GDP, e.g. 2.56), not a
-      // percentage. The thresholds are expressed in percent because that is
-      // how the Buffett indicator is normally quoted, so convert here. Read
-      // raw, 2.56 would sit below a 120 "elevated" threshold and score the
-      // most stretched valuation on record as normal.
-      const v = mcap.value * 100;
+      // eq_gdp is stored as a RATIO (2.56 = 256% of GDP) and the
+      // thresholds are in percent, because that is how the Buffett
+      // indicator is quoted. asPercent reads the declared unit rather than
+      // letting this line assume one — read raw, 2.56 sits below a 120
+      // "elevated" threshold and scores the most stretched valuation on
+      // record as normal, which is exactly what happened.
+      const v = asPercent('eq_gdp', mcap.value);
       if (v >= T.valuation.mcap_gdp_extreme) { d = Math.max(d, 1); parts.push(`equity market cap / GDP ${v.toFixed(0)}% is past the ${T.valuation.mcap_gdp_extreme}% extreme band`); }
       else if (v >= T.valuation.mcap_gdp_elevated) { d = Math.max(d, 0.5); parts.push(`equity market cap / GDP ${v.toFixed(0)}% is elevated`); }
       else parts.push(`equity market cap / GDP ${v.toFixed(0)}% is within normal range`);

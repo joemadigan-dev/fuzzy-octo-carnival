@@ -107,6 +107,27 @@ export const VELOCITY_OBS = 20;
 /** A regime flip must persist this many consecutive sessions. */
 export const HYSTERESIS_DAYS = 3;
 
+/** Deadband on the way DOWN, in percentile points.
+ *
+ *  Persistence alone does not stop regime oscillation. A score that
+ *  lingers near a zone boundary produces genuine multi-session runs on
+ *  both sides of it, so the 3-session rule is satisfied repeatedly and the
+ *  adopted regime flips back and forth — ALTITUDE (5y) alternated
+ *  HIGH ↔ CLIMBING around the 50th percentile eight times in a fortnight.
+ *
+ *  So the boundaries are asymmetric. Escalating to a more severe regime
+ *  needs the plain threshold; returning to a less severe one needs the
+ *  score to fall a further DEADBAND below it AND to persist. Both
+ *  directions still serve HYSTERESIS_DAYS.
+ *
+ *  Sized against the zone widths, which are 20 / 30 / 25 / 15 / 10
+ *  percentile points: 5 is at most a third of any zone except the
+ *  10-point top zone, where it is half, and is never large enough to make
+ *  a de-escalation skip a zone entirely. On 19 years of stored history it
+ *  cuts adopted ALTITUDE (5y) changes from 182 to 131 (-28%). A deadband
+ *  of 10 would equal the whole width of the top zone and is unsafe. */
+export const ZONE_DEADBAND_PCT = 5;
+
 /** The configuration that precedes a bust: altitude genuinely stretched
  *  while pressure is FALLING. The test is on pressure's direction, not its
  *  level — "ALTITUDE EXTENDED · PRESSURE FAIR and falling" is precisely the

@@ -10,7 +10,7 @@ import type { Point } from '../sources/types.ts';
 import { KPIS, kpiById, type KpiDef, type Freq } from '../registry/kpis.ts';
 import {
   LAYERS, Z_WINDOWS, HYSTERESIS_DAYS, MIN_COVERAGE, CORR_FLAG, DIVERGENCE, GAUGE_REF_DATES,
-  ZONE_PCTS, PIT_MIN_OBS, VELOCITY_OBS,
+  ZONE_PCTS, ZONE_DEADBAND_PCT, PIT_MIN_OBS, VELOCITY_OBS,
   PRESSURE_REGIMES, ALTITUDE_REGIMES,
   type LayerId, type ZWindow, type PressureRegime, type AltitudeRegime,
 } from '../registry/signal.ts';
@@ -139,7 +139,17 @@ export interface DivergenceNow {
   days: number;          // calendar days it has held
 }
 
+/** Sub-stage timings. computeBarometer has died twice in production
+ *  without leaving any trace of where — the cron's own marks only bracket
+ *  the whole call, so a kill inside it is indistinguishable from a kill at
+ *  its first line. These are carried out on the result and folded into the
+ *  run log the cron already writes, so they cost no additional D1 work.
+ *  A stage that never completes simply has no entry, and the last one
+ *  present names where it died. */
+export interface Stage { name: string; ms: number; note?: string }
+
 export interface BarometerResult {
+  stages: Stage[];
   detail: Record<LayerId, Record<ZWindow, LayerWindowDetail>>;
   divergenceNow: Record<ZWindow, DivergenceNow>;
   analogues: Analogue[];
@@ -150,6 +160,11 @@ export interface BarometerResult {
 
 const FFILL_CAP: Record<Freq, number> = { daily: 7, weekly: 21, monthly: 45, quarterly: 150 };
 
+/** Stages of the run in progress. Survives a throw; does NOT survive an
+ *  isolate kill, which is why the cron also checkpoints them to meta. */
+let lastStages: Stage[] = [];
+export const barometerStages = (): Stage[] => lastStages;
+
 interface ZSet {
   def: KpiDef;
   /** date → z, forward-filled onto the master axis (cap by frequency). */
@@ -157,6 +172,25 @@ interface ZSet {
 }
 
 export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResult {
+  // Progress is published to a module-level slot as well as returned, so a
+  // caller can read how far we got even when this function never returns.
+  const stages: Stage[] = [];
+  lastStages = stages;
+  let t = Date.now();
+  const stage = (name: string, note?: string) => {
+    const now = Date.now();
+    stages.push({ name, ms: now - t, ...(note ? { note } : {}) });
+    t = now;
+    // Emitted as well as collected. This function is entirely synchronous,
+    // so an isolate killed inside it can never checkpoint to D1 — nothing
+    // can write mid-block. The Workers log stream flushes independently of
+    // the return value and costs no database work, so the last line
+    // emitted is what names the stage that died. `[observability]` is on
+    // in wrangler.toml, so these are queryable after the fact.
+    console.log(`barometer.${name} ${now - t0Abs}ms${note ? ` (${note})` : ''}`);
+  };
+  const t0Abs = t;
+
   const members = KPIS.filter((k) => k.subIndex);
 
   // ── input z-scores on each series' own frequency ─────────────────────
@@ -171,6 +205,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
       },
     };
   });
+
+  stage('input_zscores', `${members.length} inputs`);
 
   // master daily axis = union of all z dates
   const dateSet = new Set<string>();
@@ -192,6 +228,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     return { def: r.def, byWindow };
   });
   const zByInput = new Map(zsets.map((z) => [z.def.id, z]));
+
+  stage('ffill_axis', `${dates.length} dates`);
 
   // ── full pipeline for one (layer, window), optionally excluding an input
   function layerSeries(layerId: LayerId, w: ZWindow, exclude?: string): {
@@ -241,13 +279,15 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     // pre-2020 classification is made with knowledge of 2020.
     const pit = pitPercentiles(scores);
     const raws = pit.map((p) => (p === null ? null : zoneOf(layerId, p)));
-    return { scores, raws, regimes: applyHysteresis(raws), pit, coverage, vel: velocitySeries(scores), subZAt };
+    return { scores, raws, regimes: regimePath(layerId, pit), pit, coverage, vel: velocitySeries(scores), subZAt };
   }
 
   const base: Record<LayerId, Record<ZWindow, ReturnType<typeof layerSeries>>> = {
     pressure: { '2y': layerSeries('pressure', '2y'), '5y': layerSeries('pressure', '5y') },
     altitude: { '2y': layerSeries('altitude', '2y'), '5y': layerSeries('altitude', '5y') },
   };
+
+  stage('layer_series');
 
   // ── history + divergence ─────────────────────────────────────────────
   // Altitude stretched AND pressure falling — direction, not level. A
@@ -351,6 +391,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     }
   }
 
+  stage('history_divergence');
+
   // ── diagnostics ──────────────────────────────────────────────────────
   // Correlation matrix of all inputs' 5y-window z-series, plus any series
   // flagged `correlate` — carried as observations with no weight. A tile
@@ -388,6 +430,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   }
   flagged.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
 
+  stage('corr_matrix', `${ids.length} inputs`);
+
   // leave-one-out on the 2y window (the tuning window)
   const loo: Diagnostics['loo'] = [];
   for (const m of members) {
@@ -412,6 +456,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
     });
   }
   loo.sort((x, y) => y.pctDaysChanged - x.pctDaysChanged);
+
+  stage('leave_one_out', `${members.length} passes`);
 
   // current divergence state per window
   const divergenceNow = {} as Record<ZWindow, DivergenceNow>;
@@ -442,7 +488,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
 
   const analogues = findAnalogues(dates, zsets, seriesMap.get('spx') ?? []);
 
-  return { detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged, observed: observed.map((o) => o.id) }, loo, divergenceEpisodes } };
+  stage('analogues');
+  return { stages, detail, divergenceNow, analogues, history, changes, diagnostics: { corr: { ids, matrix, flagged, observed: observed.map((o) => o.id) }, loo, divergenceEpisodes } };
 }
 
 /** Everything behind the gauge face for one (layer, window). */
@@ -701,10 +748,59 @@ function idxOnOrBefore(dates: string[], date: string): number {
  *  one face and GROUNDED on the other, consistently "low end of its own
  *  history". */
 function zoneOf(layer: LayerId, pct: number): Regime {
-  const names = layer === 'pressure' ? PRESSURE_REGIMES : ALTITUDE_REGIMES;
+  return regimeNames(layer)[zoneIndex(pct)] as Regime;
+}
+
+const regimeNames = (layer: LayerId) =>
+  (layer === 'pressure' ? PRESSURE_REGIMES : ALTITUDE_REGIMES) as readonly Regime[];
+
+/** Plain zone index for a percentile, with no memory. */
+export function zoneIndex(pct: number): number {
   let i = 0;
   while (i < ZONE_PCTS.length && pct >= ZONE_PCTS[i]) i++;
-  return names[i] as Regime;
+  return i;
+}
+
+/** The zone index this reading justifies GIVEN where we already are.
+ *
+ *  Escalation uses the plain boundary. De-escalation requires the reading
+ *  to fall ZONE_DEADBAND_PCT further, and steps down only as far as the
+ *  deadband actually allows — so a score sitting just under a boundary
+ *  holds the higher regime instead of flipping back and forth across it.
+ *  Exported for the tests, which drive it directly. */
+export function candidateZone(current: number, pct: number): number {
+  const plain = zoneIndex(pct);
+  if (plain >= current) return plain;          // escalation: no deadband
+  let k = current;
+  while (k > 0 && pct < ZONE_PCTS[k - 1] - ZONE_DEADBAND_PCT) k--;
+  return k;
+}
+
+/** Walk a percentile series into an adopted-regime path, applying the
+ *  deadband and then HYSTERESIS_DAYS of persistence to any change.
+ *  Replaces zoneOf-per-date followed by applyHysteresis, which had no
+ *  deadband and therefore re-adopted across a boundary indefinitely. */
+export function regimePath(layer: LayerId, pit: (number | null)[]): (Regime | null)[] {
+  const names = regimeNames(layer);
+  const out: (Regime | null)[] = new Array(pit.length).fill(null);
+  let state: number | null = null;
+  let pending: number | null = null;
+  let count = 0;
+  for (let i = 0; i < pit.length; i++) {
+    const p = pit[i];
+    if (p === null) { out[i] = state === null ? null : names[state]; continue; }
+    if (state === null) { state = zoneIndex(p); pending = null; count = 0; }
+    else {
+      const cand = candidateZone(state, p);
+      if (cand === state) { pending = null; count = 0; }
+      else if (cand === pending) {
+        count++;
+        if (count >= HYSTERESIS_DAYS) { state = cand; pending = null; count = 0; }
+      } else { pending = cand; count = 1; }
+    }
+    out[i] = names[state];
+  }
+  return out;
 }
 
 // ── percentile machinery ───────────────────────────────────────────────
@@ -769,28 +865,6 @@ function quantile(sorted: number[], pct: number): number {
   return sorted[idx];
 }
 
-function applyHysteresis(rawR: (Regime | null)[]): (Regime | null)[] {
-  const out: (Regime | null)[] = new Array(rawR.length).fill(null);
-  let state: Regime | null = null;
-  let pending: Regime | null = null;
-  let pendingCount = 0;
-  for (let i = 0; i < rawR.length; i++) {
-    const r = rawR[i];
-    if (r === null) { out[i] = state; continue; }
-    if (state === null) {
-      state = r; pending = null; pendingCount = 0;
-    } else if (r === state) {
-      pending = null; pendingCount = 0;
-    } else if (r === pending) {
-      pendingCount++;
-      if (pendingCount >= HYSTERESIS_DAYS) { state = r; pending = null; pendingCount = 0; }
-    } else {
-      pending = r; pendingCount = 1;
-    }
-    out[i] = state;
-  }
-  return out;
-}
 
 function pearsonOverDates(a: Map<string, number>, b: Map<string, number>, dates: string[]): number | null {
   let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;

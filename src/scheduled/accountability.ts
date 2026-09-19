@@ -49,17 +49,44 @@ export async function runAlerts(
   if (!hist.length) return log;
   const lastDate = hist[hist.length - 1].date;
   const candidates: Candidate[] = [];
+  const regimeNow = new Map<string, string>();
 
-  // 1. regime change on either gauge (fresh transitions only)
-  for (const c of result.changes) {
-    if (c.date !== lastDate) continue;
-    const top = c.drivers.slice(0, 3).map((d) => `${d.id} z=${d.z.toFixed(1)}`).join(', ');
-    candidates.push({
-      kind: 'regime',
-      key: `${c.layer}:${c.window}`,
-      message: `${c.layer.toUpperCase()} (${c.window}) ${c.from_regime} → ${c.to_regime} at ${c.score.toFixed(2)} — drivers: ${top}`,
-      detail: c,
-    });
+  // 1. regime change on either gauge.
+  //
+  //    Fires on the ADOPTED regime differing from the one last alerted,
+  //    not on a change appearing at the end of a freshly recomputed
+  //    history. The barometer rebuilds its whole regime path every run, so
+  //    a marginal input revision can move where a transition lands and
+  //    re-present it as new — which is how ALTITUDE (5y) produced eight
+  //    near-identical alerts in a fortnight. Comparing against the stored
+  //    last-alerted regime is immune to that, because it asks the only
+  //    question that matters to a reader: is the regime now different from
+  //    the one I was last told about?
+  const lastAlerted = new Map<string, string>();
+  const regimeRows = await env.DB.prepare("SELECT key, value FROM meta WHERE key LIKE 'alert_regime:%'")
+    .all<{ key: string; value: string }>();
+  for (const r of regimeRows.results ?? []) lastAlerted.set(r.key.slice(14), r.value);
+
+  for (const layer of ['pressure', 'altitude'] as const) {
+    for (const w of ['2y', '5y'] as const) {
+      const adopted = result.detail[layer][w].regime;
+      if (!adopted) continue;
+      const id = `${layer}:${w}`;
+      const was = lastAlerted.get(id) ?? null;
+      regimeNow.set(id, adopted);
+      if (was === adopted) continue;
+      if (was === null) continue;            // first sighting is not a change
+      const c = [...result.changes].reverse().find((x) => x.layer === layer && x.window === w && x.to_regime === adopted);
+      const top = (c?.drivers ?? []).slice(0, 3).map((d) => `${d.id} z=${d.z.toFixed(1)}`).join(', ');
+      candidates.push({
+        kind: 'regime',
+        key: id,
+        message: `${layer.toUpperCase()} (${w}) ${was} → ${adopted}`
+          + (c ? ` at ${c.score.toFixed(2)}, adopted ${c.date}` : '')
+          + (top ? ` — drivers: ${top}` : ''),
+        detail: { layer, window: w, from: was, to: adopted, change: c ?? null },
+      });
+    }
   }
 
   // 2. divergence configuration opening or closing
@@ -152,6 +179,14 @@ export async function runAlerts(
   candidates.push(...cockpitAlerts(seriesMap));
 
   log.push(...await fire(env, candidates, today, nowIso));
+
+  // Record what the reader has now been told, so the next run compares
+  // against it rather than against a rebuilt history.
+  for (const [id, regime] of regimeNow) {
+    await env.DB.prepare(
+      "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    ).bind(`alert_regime:${id}`, regime).run();
+  }
   return log;
 }
 

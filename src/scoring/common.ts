@@ -34,6 +34,14 @@ export interface Score {
   components: Component[];
   /** How much of the score's evidence was actually available, 0-1. */
   coverage: number;
+  /** Components with data, and total. Rendered as "EVIDENCE 4/5".
+   *  Deliberately NOT renormalised: a missing component contributes 0 and
+   *  the score stays on the same 0-5 scale, so an incomplete reading is
+   *  low AND visibly incomplete rather than being scaled up to look
+   *  confident. UNKNOWN is not ZERO, and it is not a smaller denominator
+   *  either. */
+  evidenceAvailable: number;
+  evidenceTotal: number;
 }
 
 const LEVELS: Level[] = ['NORMAL', 'WATCH', 'ELEVATED', 'STRESS', 'CRITICAL'];
@@ -60,6 +68,8 @@ export function build(components: Component[], max = 5): Score {
     level: levelOf(score),
     components,
     coverage: components.length ? known.length / components.length : 0,
+    evidenceAvailable: known.length,
+    evidenceTotal: components.length,
   };
 }
 

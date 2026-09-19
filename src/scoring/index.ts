@@ -13,6 +13,8 @@ import { bustRisk, type BustResult } from './bust.ts';
 import { liquidityCard, type LiquidityResult } from './liquidity.ts';
 import { classify, settle, PERSIST_DAYS, type Phase, type PhaseResult } from './phase.ts';
 import { whatChanged, type Change, type Horizon, type Snapshot } from './whatchanged.ts';
+import { marketSetup, type Setup } from './setup.ts';
+import { asPercent } from './units.ts';
 import type { Score } from './common.ts';
 
 export interface TargetRow {
@@ -33,6 +35,8 @@ export interface Cockpit {
   credit: CreditResult;
   liquidity: LiquidityResult;
   targets: TargetRow[];
+  /** One deterministic sentence built from the readings above it. */
+  setup: Setup;
   whatChanged: Record<Horizon, Change[]>;
   commodities: { id: string; label: string; r6m: number | null; vsSpx: number | null; leading: boolean }[];
   snapshot: Snapshot;
@@ -110,6 +114,16 @@ export function buildCockpit(
     explanation: c.explanation, evidence: c.evidence,
   };
 
+  const mcap = latest(m.get('eq_gdp'));
+  const setup = marketSetup({
+    phase, meltup, bust, credit, liquidity,
+    ret6m, ret3mPace: (() => { const r3 = pctChange(m.get('spx'), 91); return r3 === null ? null : r3 * 2; })(),
+    drawdown: dd,
+    valuationPct: mcap ? asPercent('eq_gdp', mcap.value) : null,
+    erp: latest(m.get('erp'))?.value ?? null,
+    commoditiesLeading: commodities.filter((x) => x.leading).length,
+  });
+
   const snapshot: Snapshot = {
     date: today,
     phase: phase.phase,
@@ -124,7 +138,7 @@ export function buildCockpit(
 
   return {
     computedAt: nowIso, asOf, phase, meltup, bust, credit, liquidity,
-    targets: targetRows(m),
+    targets: targetRows(m), setup,
     whatChanged: whatChanged(m, snapshot, prior.history),
     commodities,
     snapshot,
