@@ -34,7 +34,7 @@
 
 import thresholds from '../../config/thresholds.json' with { type: 'json' };
 import { build, noData, type Component, type Score } from './common.ts';
-import type { CompanyMetrics, Measure } from '../compute/aicapital.ts';
+import type { CompanyMetrics, Measure } from '../compute/ai-capital-metrics.ts';
 import { COMPANIES, byTicker } from '../registry/companies.ts';
 
 const T = thresholds.ai_capital;

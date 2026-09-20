@@ -14,6 +14,11 @@ import { defaultStaleDays } from '../registry/kpis.ts';
 export type HealthState = 'GREEN' | 'AMBER' | 'RED';
 
 export interface Health {
+  /** Which sources are stale, named — see the note at the counting loop. */
+  staleSources: {
+    id: string; label: string; freq: string; source: string;
+    lastDate: string; ageDays: number; staleAfterDays: number; critical: boolean;
+  }[];
   state: HealthState;
   /** One line, shown collapsed. */
   summary: string;
@@ -65,6 +70,11 @@ export function systemHealth(i: HealthInput): Health {
   const notes: string[] = [];
   let ok = 0, stale = 0, failed = 0;
   const criticalStale: string[] = [];
+  // NAMED, not just counted. "2 non-critical sources stale" required
+  // reading the registry and the wall payload side by side to find out
+  // which two — a count tells you something is wrong without telling you
+  // what, which is the least useful thing a health indicator can do.
+  const staleSources: Health['staleSources'] = [];
 
   for (const def of KPIS) {
     const pts = i.seriesMap.get(def.id);
@@ -75,8 +85,14 @@ export function systemHealth(i: HealthInput): Health {
     }
     const last = pts[pts.length - 1].date;
     const ageDays = Math.floor((Date.parse(today + 'T00:00:00Z') - Date.parse(last + 'T00:00:00Z')) / 86400000);
-    if (ageDays > defaultStaleDays(def)) {
+    const limit = defaultStaleDays(def);
+    if (ageDays > limit) {
       stale++;
+      staleSources.push({
+        id: def.id, label: def.label, freq: def.freq ?? 'daily',
+        source: def.source ?? 'derived', lastDate: last, ageDays, staleAfterDays: limit,
+        critical: CRITICAL.includes(def.id),
+      });
       if (CRITICAL.includes(def.id)) criticalStale.push(`${def.label} (${ageDays}d old)`);
     } else ok++;
   }
@@ -141,6 +157,6 @@ export function systemHealth(i: HealthInput): Health {
     kpisOk: ok, kpisStale: stale, kpisFailed: failed,
     criticalStale, lastFailedStage: i.lastFailedStage,
     runCompleted: i.runCompleted, hoursSinceRun: hoursSinceRun === null ? null : Math.round(hoursSinceRun * 10) / 10,
-    notes, ai,
+    notes, ai, staleSources,
   };
 }

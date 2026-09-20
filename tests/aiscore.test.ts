@@ -14,8 +14,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreAiCapital, aiCapitalStatus, aiCapitalLine } from '../src/scoring/aicapital.ts';
-import type { CompanyMetrics, Measure } from '../src/compute/aicapital.ts';
+import { scoreAiCapital, aiCapitalStatus, aiCapitalLine } from '../src/scoring/ai-capital-score.ts';
+import type { CompanyMetrics, Measure } from '../src/compute/ai-capital-metrics.ts';
 
 const n = (value: number | null, unit: Measure['unit'] = 'fraction'): Measure =>
   value === null ? { value: null, unit, unknown: 'unavailable' } : { value, unit, periods: ['2026-06-30'] };

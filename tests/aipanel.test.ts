@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 import {
   transmissionMap, supplierSignal, hunterCross, thesisTest, dataCaveats,
 } from '../src/scoring/aipanel.ts';
-import type { AiCapitalScore } from '../src/scoring/aicapital.ts';
-import type { CompanyMetrics, Measure } from '../src/compute/aicapital.ts';
+import type { AiCapitalScore } from '../src/scoring/ai-capital-score.ts';
+import type { CompanyMetrics, Measure } from '../src/compute/ai-capital-metrics.ts';
 import type { Point } from '../src/sources/types.ts';
 
 const n = (value: number | null, unit: Measure['unit'] = 'fraction'): Measure =>

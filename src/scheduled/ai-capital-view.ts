@@ -12,8 +12,8 @@
 // worse than one that says how old it is.
 
 import type { Point } from '../sources/types.ts';
-import { companyMetrics, type CompanyMetrics, type Series } from '../compute/aicapital.ts';
-import { scoreAiCapital, aiCapitalLine, type AiCapitalScore } from '../scoring/aicapital.ts';
+import { companyMetrics, type CompanyMetrics, type Series } from '../compute/ai-capital-metrics.ts';
+import { scoreAiCapital, aiCapitalLine, type AiCapitalScore } from '../scoring/ai-capital-score.ts';
 import {
   transmissionMap, supplierSignal, hunterCross, thesisTest, dataCaveats,
   type Transmission, type SupplierSignal, type HunterAi, type ThesisTest, type Caveat,

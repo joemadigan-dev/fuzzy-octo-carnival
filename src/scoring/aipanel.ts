@@ -16,8 +16,8 @@
 
 import thresholds from '../../config/thresholds.json' with { type: 'json' };
 import type { Point } from '../sources/types.ts';
-import type { CompanyMetrics } from '../compute/aicapital.ts';
-import type { AiCapitalScore } from './aicapital.ts';
+import type { CompanyMetrics } from '../compute/ai-capital-metrics.ts';
+import type { AiCapitalScore } from './ai-capital-score.ts';
 import { COMPANIES } from '../registry/companies.ts';
 import { latest, change } from './common.ts';
 

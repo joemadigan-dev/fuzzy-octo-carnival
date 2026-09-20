@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   ttm, trailingFour, yearAgo, latestCommon, incremental, ratio, minus,
   companyMetrics, type Quarter, type Series,
-} from '../src/compute/aicapital.ts';
+} from '../src/compute/ai-capital-metrics.ts';
 
 const BN = 1e9;
 const q = (periodEnd: string, value: number): Quarter =>

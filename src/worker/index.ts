@@ -4,6 +4,9 @@
 
 import { KPIS, CLUSTERS, kpiById } from '../registry/kpis.ts';
 import { ZONE_PCTS } from '../registry/signal.ts';
+import {
+  buildSignalHistory, type CockpitRow, type AiRow,
+} from '../scoring/signal-history.ts';
 import { runScheduled, type Env as BaseEnv } from '../scheduled/index.ts';
 
 type Env = BaseEnv & { ASSETS?: Fetcher };
@@ -47,6 +50,7 @@ export default {
       else if (path === '/api/barometer') res = await apiBarometer(env);
       else if (path === '/api/alerts') res = await apiAlerts(env);
       else if (path === '/api/cockpit') res = await apiCockpit(env);
+      else if (path === '/api/signals') res = await apiSignals(env);
       else if (path.startsWith('/api/series/')) res = await apiSeries(env, path.slice('/api/series/'.length));
       else res = json({ error: 'not found' }, 404);
     } catch (e) {
@@ -204,6 +208,37 @@ async function apiSeries(env: Env, rawId: string): Promise<Response> {
 
 /** Executive cockpit — section 27. Everything the first screen needs in
  *  one finished object; the request path does no arithmetic. */
+
+/** Signal history: the last N days of every executive signal, plus where
+ *  each current state began.
+ *
+ *  Its own endpoint rather than riding the cockpit payload, because that
+ *  payload is stored verbatim in cockpit_history.detail once a day — a
+ *  90-day history embedded in it would be re-stored inside every future
+ *  day's row, growing quadratically for data already in the table.
+ *
+ *  Two small indexed reads (at most 90 rows each), and edge-cached like
+ *  every other GET here. */
+async function apiSignals(env: Env): Promise<Response> {
+  const DAYS = 90;
+  const [ck, ai] = await Promise.all([
+    env.DB.prepare(
+      `SELECT date, phase, meltup, bust, bust_onset, credit, credit_stage,
+              liquidity_regime, liquidity_level
+         FROM cockpit_history ORDER BY date DESC LIMIT ?`,
+    ).bind(DAYS).all<CockpitRow>(),
+    env.DB.prepare(
+      `SELECT date, score, status, transmission, hunter_link
+         FROM ai_capital_history ORDER BY date DESC LIMIT ?`,
+    ).bind(DAYS).all<AiRow>(),
+  ]);
+  const signals = buildSignalHistory(
+    [...(ck.results ?? [])].reverse(),
+    [...(ai.results ?? [])].reverse(),
+  );
+  return json({ days: DAYS, signals });
+}
+
 async function apiCockpit(env: Env): Promise<Response> {
   const [row, changes, timeline] = await Promise.all([
     env.DB.prepare('SELECT date, computed_at, detail FROM cockpit_history ORDER BY date DESC LIMIT 1')

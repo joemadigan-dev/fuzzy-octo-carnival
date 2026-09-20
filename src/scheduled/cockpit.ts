@@ -8,7 +8,7 @@ import { buildCockpit, type Cockpit } from '../scoring/index.ts';
 import { systemHealth } from '../scoring/health.ts';
 import type { Phase } from '../scoring/phase.ts';
 import type { Snapshot } from '../scoring/whatchanged.ts';
-import { buildAiCapital, saveAiCapital, type AiCapitalView } from './aicapital.ts';
+import { buildAiCapital, saveAiCapital, type AiCapitalView } from './ai-capital-view.ts';
 import { aiCapitalChanges } from '../scoring/aichanged.ts';
 import type { Env } from './index.ts';
 

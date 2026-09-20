@@ -62,7 +62,7 @@
     cardBust(); cardCredit(); cardLiquidity();
     renderHealth(); renderSetup(); renderChanged(); renderTargets(); renderMeltupDetail(); renderLadder();
     renderLiquidityDetail(); renderCommodities(); renderTimeline(); renderRatesChart();
-    renderAiCapital();
+    renderAiCapital(); renderSignalHistory();
   }
 
 
@@ -209,6 +209,99 @@
     const open = w.hidden; w.hidden = !open;
     b.setAttribute('aria-expanded', String(open));
   });
+
+
+  // ── SIGNAL HISTORY ───────────────────────────────────────────────────
+  // Below the fold by design. The cockpit answers "what is it now";
+  // this answers "is it moving", which is the question a single reading
+  // cannot address — a 3.0 that has been 3.0 for a month and a 3.0 that
+  // was 2.0 last week are different facts.
+  let sig = null;
+  async function loadSignals() {
+    try {
+      const r = await fetch('/api/signals', { cache: 'no-store' });
+      if (!r.ok) return;
+      sig = await r.json();
+      renderSignalHistory();
+    } catch { /* the panel simply stays empty */ }
+  }
+
+  const SPARK_W = 120, SPARK_H = 22;
+  function spark(points) {
+    const vals = points.map((p) => p.value).filter((v) => v !== null && v !== undefined);
+    if (vals.length < 2) return '';
+    const min = 0, max = 5;                 // scores share a fixed 0-5 scale
+    const step = SPARK_W / (points.length - 1);
+    let d = '', started = false;
+    points.forEach((p, i) => {
+      if (p.value === null || p.value === undefined) return;
+      const x = (i * step).toFixed(1);
+      const y = (SPARK_H - ((p.value - min) / (max - min)) * SPARK_H).toFixed(1);
+      d += `${started ? 'L' : 'M'}${x},${y}`;
+      started = true;
+    });
+    return `<svg class="ck-spark" width="${SPARK_W}" height="${SPARK_H}" viewBox="0 0 ${SPARK_W} ${SPARK_H}"
+      role="img" aria-label="trend"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+  }
+
+  function sinceText(s) {
+    if (!s.since) return '<span class="ck-sig-none">no history yet</span>';
+    if (s.sinceTrackingBegan) return '<span class="ck-sig-began">since tracking began</span>';
+    const d = new Date(s.since + 'T00:00:00Z');
+    const m = d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
+    return `${d.getUTCDate()} ${m} ${d.getUTCFullYear()}`;
+  }
+
+  function renderSignalHistory() {
+    if (!sig) return;
+    const rows = sig.signals;
+    const dated = rows.filter((s) => s.points.length);
+    const all = dated.flatMap((s) => s.points.map((p) => p.date)).sort();
+    $('ck-sig-range').textContent = all.length
+      ? `${all[0]} → ${all[all.length - 1]} · ${new Set(all).size} day${new Set(all).size === 1 ? '' : 's'} stored`
+      : 'no history stored yet';
+
+    $('ck-sig-table').innerHTML =
+      `<thead><tr><th>Signal</th><th>Current</th><th>Trend</th><th>Since</th><th>Previous</th><th>Held</th></tr></thead><tbody>`
+      + rows.map((s) => `<tr>
+          <td class="ck-sig-label">${esc(s.label)}</td>
+          <td class="ck-sig-cur"><b>${esc(s.current ?? '—')}</b>${
+            s.currentValue !== null && s.currentValue !== undefined
+              ? ` <span class="ck-sig-v">${s.currentValue.toFixed(1)}/5</span>` : ''}</td>
+          <td class="ck-sig-spark">${s.kind === 'score' ? spark(s.points) : ''}</td>
+          <td class="ck-sig-since">${sinceText(s)}</td>
+          <td class="ck-sig-prev">${s.previous ? esc(s.previous) : '<span class="ck-sig-none">—</span>'}</td>
+          <td class="ck-sig-held">${s.heldDays === null ? '—' : `${s.heldDays}d`}</td>
+        </tr>`).join('') + '</tbody>';
+
+    const began = rows.filter((s) => s.sinceTrackingBegan).length;
+    $('ck-sig-note').textContent = began
+      ? `${began} of ${rows.length} signals have held their current state for the whole stored history, so their true transition date is unknown and is reported as "since tracking began" rather than guessed. Transitions are measured on the band (WATCH, ELEVATED …), not on the raw number, so drift inside a band does not reset the date.`
+      : 'Transitions are measured on the band (WATCH, ELEVATED …), not on the raw number, so drift inside a band does not reset the date.';
+
+    // The compact since-line on each executive card.
+    const map = { 'card-meltup': 'meltup', 'card-bust': 'bust', 'card-credit': 'credit',
+      'card-liquidity': 'liquidity', 'card-phase': 'phase' };
+    for (const [cardId, sigId] of Object.entries(map)) {
+      const card = document.getElementById(cardId);
+      const s = rows.find((x) => x.id === sigId);
+      if (!card || !s) continue;
+      card.querySelector('.ck-since')?.remove();
+      const el = document.createElement('div');
+      el.className = 'ck-since';
+      el.innerHTML = `${sinceText(s)}${s.previous ? ` · was ${esc(s.previous)}` : ''}`;
+      card.appendChild(el);
+    }
+    const aiLine = $('ck-ai-line');
+    const aiSig = rows.find((x) => x.id === 'ai_capital');
+    if (aiLine && aiSig && !aiLine.hidden) {
+      aiLine.querySelector('.ck-since')?.remove();
+      const el = document.createElement('div');
+      el.className = 'ck-since ck-since-ai';
+      el.innerHTML = `AI CAPITAL ${sinceText(aiSig)}${aiSig.previous ? ` · was ${esc(aiSig.previous)}` : ''}`;
+      aiLine.appendChild(el);
+    }
+  }
 
   // ── CARD 1: regime ──────────────────────────────────────────────────
   function cardPhase() {
@@ -368,6 +461,21 @@
         <span>Last run completed</span><b>${h.runCompleted ? 'yes' : 'NO'}</b>
       </div>
       ${h.criticalStale?.length ? `<div class="ck-hrow crit">Critical data stale: ${h.criticalStale.map(esc).join(', ')}</div>` : ''}
+      ${(h.staleSources ?? []).length ? `<div class="ck-hstale">
+        <div class="ck-hstale-h">STALE SOURCES</div>
+        ${h.staleSources.map((x) => `<div class="ck-hrow">
+          <b>${esc(x.label)}</b> <span>(${esc(x.id)}, ${esc(x.source)}, ${esc(x.freq)})</span> —
+          last observation ${esc(x.lastDate)}, ${x.ageDays} days old against a ${x.staleAfterDays}-day limit${
+            x.critical ? ', CRITICAL' : ', not used by any cockpit score'}.
+        </div>`).join('')}
+      </div>` : ''}
+      ${h.ai ? `<div class="ck-hstale">
+        <div class="ck-hstale-h">AI DATA</div>
+        <div class="ck-hrow">${esc(h.ai.companies)} companies · latest SEC refresh ${esc(h.ai.latestFiled ?? '—')}
+          · newest quarter ${h.ai.quarterAgeDays === null ? '—' : `${h.ai.quarterAgeDays}d old`}
+          · evidence ${esc(h.ai.evidence)} · reconciliation ${esc(h.ai.reconciliation)}</div>
+        ${h.ai.note ? `<div class="ck-hrow">${esc(h.ai.note)}</div>` : ''}
+      </div>` : ''}
       ${(h.notes ?? []).map((n) => `<div class="ck-hrow">${esc(n)}</div>`).join('')}`;
   }
   $('ck-health').addEventListener('click', () => {
@@ -628,6 +736,7 @@
   }
   addEventListener('resize', () => { if (ratesPlot) renderRatesChart(); }, { passive: true });
 
-  load();
+  load(); loadSignals();
   setInterval(load, POLL_MS);
+  setInterval(loadSignals, POLL_MS);
 })();

@@ -14,7 +14,7 @@
 
 import thresholds from '../../config/thresholds.json' with { type: 'json' };
 import { KIND_WEIGHT, type Change, type Horizon } from './whatchanged.ts';
-import type { AiCapitalView } from '../scheduled/aicapital.ts';
+import type { AiCapitalView } from '../scheduled/ai-capital-view.ts';
 import type { Env } from '../scheduled/index.ts';
 
 const T = thresholds.ai_whatchanged;
