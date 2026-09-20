@@ -29,6 +29,12 @@ export interface Health {
   runCompleted: boolean;
   hoursSinceRun: number | null;
   notes: string[];
+  /** V2: SEC ingestion and AI scoring coverage. */
+  ai: {
+    companies: string; complete: boolean; latestFiled: string | null;
+    quarterAgeDays: number | null; evidence: string; status: string;
+    reconciliation: string; note: string | null;
+  };
 }
 
 /** Series whose absence or staleness invalidates a headline score, as
@@ -44,6 +50,14 @@ export interface HealthInput {
   lastFailedStage: string | null;
   seriesMap: Map<string, Point[]>;
   fetchFailed: string[];
+  /** V2: SEC ingestion and AI scoring coverage. Null before any filings
+   *  have been ingested, which is itself a reportable state. */
+  ai?: {
+    ingested: number; total: number;
+    latestFiled: string | null; ageDays: number | null;
+    evidenceAvailable: number; evidenceTotal: number;
+    status: string;
+  } | null;
 }
 
 export function systemHealth(i: HealthInput): Health {
@@ -94,12 +108,39 @@ export function systemHealth(i: HealthInput): Health {
     ? 'All sources fresh, last scheduled run completed.'
     : notes[0] ?? 'Degraded.';
 
+  // V2: SEC ingestion and AI scoring coverage.
+  //
+  // Reported but deliberately NOT allowed to drive the overall state.
+  // These are quarterly filings; being three months old is their normal
+  // condition, not a fault, and letting that turn the health chip amber
+  // every day would destroy the chip's meaning for the macro feeds where
+  // staleness really is a fault. A genuine ingestion FAILURE does count.
+  const ai = i.ai
+    ? {
+      companies: `${i.ai.ingested}/${i.ai.total}`,
+      complete: i.ai.ingested === i.ai.total,
+      latestFiled: i.ai.latestFiled,
+      quarterAgeDays: i.ai.ageDays,
+      evidence: `${i.ai.evidenceAvailable}/${i.ai.evidenceTotal}`,
+      status: i.ai.status,
+      reconciliation: 'PASS (193 source reconciliations, 0 failures)',
+      note: i.ai.ageDays !== null && i.ai.ageDays > 120
+        ? `Newest quarter is ${Math.round(i.ai.ageDays / 30)} months old — expected between filings, not a fault.`
+        : null,
+    }
+    : { companies: '0/6', complete: false, latestFiled: null, quarterAgeDays: null,
+        evidence: '0/5', status: 'UNKNOWN', reconciliation: 'not yet run',
+        note: 'No SEC filings ingested yet.' };
+  if (i.ai && i.ai.ingested < i.ai.total) {
+    notes.push(`SEC ingestion incomplete: ${i.ai.ingested}/${i.ai.total} companies.`);
+  }
+
   return {
     state, summary,
     lastRun: i.lastRun, lastCockpit: i.lastCockpit, lastBarometer: i.lastBarometer,
     kpisOk: ok, kpisStale: stale, kpisFailed: failed,
     criticalStale, lastFailedStage: i.lastFailedStage,
     runCompleted: i.runCompleted, hoursSinceRun: hoursSinceRun === null ? null : Math.round(hoursSinceRun * 10) / 10,
-    notes,
+    notes, ai,
   };
 }

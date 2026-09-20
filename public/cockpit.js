@@ -62,7 +62,153 @@
     cardBust(); cardCredit(); cardLiquidity();
     renderHealth(); renderSetup(); renderChanged(); renderTargets(); renderMeltupDetail(); renderLadder();
     renderLiquidityDetail(); renderCommodities(); renderTimeline(); renderRatesChart();
+    renderAiCapital();
   }
+
+
+  // ── AI CAPITAL ───────────────────────────────────────────────────────
+  // Two lines in the executive view, everything else in the panel far
+  // below. The cockpit stays five cards; §11 of the brief and the
+  // fifteen-second rule both depend on that, and detailed accounting has
+  // no business at the top of the page.
+  const AI_PCT = (v) => (v === null || v === undefined ? '—' : `${(v * 100).toFixed(0)}%`);
+  const AI_X = (v) => (v === null || v === undefined ? '—' : `${v.toFixed(2)}x`);
+
+  function renderAiCapital() {
+    const ai = ck.aiCapital;
+    const line = $('ck-ai-line');
+    const panel = $('ck-ai-panel');
+    if (!ai) {
+      // Absent is reported, not hidden: "no filings yet" is a state.
+      line.hidden = false; panel.hidden = true;
+      $('ck-ai-status').textContent = 'UNKNOWN';
+      $('ck-ai-status').dataset.band = 'unknown';
+      $('ck-ai-transmission').textContent = 'NO DATA';
+      $('ck-ai-transmission').dataset.band = 'unknown';
+      $('ck-ai-why').innerHTML = '<p>No company filings have been ingested yet, so the AI capital view is unknown — which is not the same as benign.</p>';
+      return;
+    }
+    line.hidden = false; panel.hidden = false;
+
+    const band = (st) => ({
+      'NO SIGNAL': 'green', WATCH: 'amber', ELEVATED: 'amber', STRESS: 'red', CRITICAL: 'red', UNKNOWN: 'unknown',
+    }[st] || 'unknown');
+    const tband = (st) => ({
+      'NOT CONFIRMED': 'green', 'EARLY SIGNS': 'amber', FORMING: 'amber', CONFIRMED: 'red', UNKNOWN: 'unknown',
+    }[st] || 'unknown');
+
+    $('ck-ai-status').textContent = `${ai.score.status} — ${ai.score.score.toFixed(1)}/5`;
+    $('ck-ai-status').dataset.band = band(ai.score.status);
+    $('ck-ai-transmission').textContent = ai.transmission.status;
+    $('ck-ai-transmission').dataset.band = tband(ai.transmission.status);
+
+    // expandable explanation on the compact line
+    const comps = ai.score.components.map((c, i) =>
+      `<span class="ck-ai-comp"><b>${esc(AI_NAMES[i] || 'COMPONENT')}</b>
+        <span class="ck-ai-d">${c.unknown ? 'UNKNOWN' : c.delta.toFixed(1)}</span></span>`).join('');
+    $('ck-ai-why').innerHTML =
+      `<div class="ck-ai-comprow">${comps}<span class="ck-ai-comp ck-ai-total"><b>TOTAL</b>
+         <span class="ck-ai-d">${ai.score.score.toFixed(1)} / 5</span></span></div>
+       <p>${esc(ai.thesis.verdict)}</p>
+       <p class="ck-ai-jump"><a href="#ck-ai-panel">Full AI capital panel ↓</a></p>`;
+
+    // ── panel ────────────────────────────────────────────────────────
+    $('ck-ai-score').textContent = ai.score.score.toFixed(1);
+    $('ck-ai-band').textContent = ai.score.status;
+    $('ck-ai-band').dataset.band = band(ai.score.status);
+    $('ck-ai-evidence').textContent = `EVIDENCE ${ai.score.evidenceAvailable}/${ai.score.evidenceTotal}`;
+    $('ck-ai-asof').textContent = ai.score.newestPeriod
+      ? `newest quarter ends ${ai.score.newestPeriod}${ai.ageDays !== null ? ` · ${ai.ageDays} days ago` : ''}`
+        + ` · ${ai.coverage.ingested}/${ai.coverage.total} companies`
+      : '';
+
+    $('ck-ai-components').innerHTML = ai.score.components.map((c, i) =>
+      `<div class="ck-ai-component${c.unknown ? ' is-unknown' : ''}">
+         <div class="ck-ai-clabel"><b>${esc(AI_NAMES[i] || '')}</b>
+           <span class="ck-ai-cd">${c.unknown ? 'UNKNOWN' : c.delta.toFixed(1)}</span></div>
+         <p>${esc(c.reason)}</p>
+       </div>`).join('');
+
+    // companies
+    const flagCell = (c) => c.flag
+      ? `<span class="ck-ai-flag" data-f="${c.flag === 'FINANCING STRESS' ? 'stress' : 'outlier'}"
+             title="${esc(c.flagReason || '')}">${esc(c.flag)}</span>` : '';
+    const cell = (v, fmt, key, c) => {
+      if (v === null || v === undefined) {
+        const why = c.unknown[key];
+        return `<td class="ck-ai-unk"${why ? ` title="${esc(why)}"` : ''}>UNKNOWN</td>`;
+      }
+      return `<td>${fmt(v)}</td>`;
+    };
+    $('ck-ai-companies').innerHTML =
+      `<thead><tr><th>Company</th><th>Capex / Rev</th><th>Capex / OCF</th>
+        <th>Δ OpInc / Δ Cap</th><th>Δ FCF / Δ Cap</th><th>Net debt / OCF</th>
+        <th>Capex trend</th><th>Period</th></tr></thead><tbody>` +
+      ck.aiCapital.companies.map((c) => `<tr${c.flag ? ' class="is-flagged"' : ''}>
+        <td class="ck-ai-tick"><b>${esc(c.ticker)}</b>
+          <span class="ck-ai-role">${esc(c.role)}</span>
+          ${c.notes.length ? `<sup class="ck-ai-note" title="${esc(c.notes.join(' '))}">note</sup>` : ''}
+          ${flagCell(c)}</td>
+        ${cell(c.capexToRevenue, AI_PCT, 'capexToRevenue', c)}
+        ${cell(c.capexToOcf, AI_PCT, 'capexToOcf', c)}
+        ${cell(c.incrOpincOnCapital, AI_PCT, 'incrOpincOnCapital', c)}
+        ${cell(c.incrFcfOnCapital, AI_PCT, 'incrFcfOnCapital', c)}
+        ${cell(c.netDebtToOcf, AI_X, 'netDebtToOcf', c)}
+        <td>${c.capexGrowth === null ? '—' : `${c.capexGrowth >= 0 ? '+' : ''}${(c.capexGrowth * 100).toFixed(0)}%`}</td>
+        <td class="ck-ai-period">${esc(c.periodEnd || '—')}${c.filingUrl
+          ? ` <a href="${esc(c.filingUrl)}" target="_blank" rel="noopener">${esc(c.form || 'filing')}</a>` : ''}</td>
+      </tr>`).join('') + '</tbody>';
+
+    $('ck-ai-notes').innerHTML = ck.aiCapital.companies
+      .filter((c) => c.flag && c.flagReason)
+      .map((c) => `<li><b>${esc(c.ticker)} — ${esc(c.flag)}.</b> ${esc(c.flagReason)}</li>`).join('');
+
+    // supplier signal
+    const sup = ai.supplier;
+    $('ck-ai-supplier').innerHTML =
+      `<div class="ck-ai-supstate" data-s="${sup.state === 'ALIGNED' ? 'ok' : 'warn'}">${esc(sup.state)}</div>
+       <div class="ck-ai-supnums">
+         <span><b>${esc(sup.supplierTicker)} revenue</b>${AI_PCT(sup.supplierGrowth)}</span>
+         <span><b>Deployer capex</b>${AI_PCT(sup.deployerCapexGrowth)}</span>
+         <span><b>Gap</b>${sup.gap === null ? '—' : `${(sup.gap * 100).toFixed(0)}pp`}</span>
+       </div>
+       <p>${esc(sup.explanation)}</p>`;
+
+    // transmission map
+    $('ck-ai-map').innerHTML = ai.transmission.nodes.map((n, i) =>
+      `${i ? '<span class="ck-ai-arrow" aria-hidden="true">→</span>' : ''}
+       <span class="ck-ai-node" data-s="${n.state.toLowerCase()}" title="${esc(n.detail)}">
+         <b>${esc(n.label)}</b><i>${esc(n.state)}</i></span>`).join('');
+    $('ck-ai-maptext').textContent = ai.transmission.explanation;
+
+    // hunter cross
+    $('ck-ai-hunter').innerHTML =
+      `<div class="ck-ai-hstate" data-s="${ai.hunter.state === 'NO CONNECTION' ? 'ok'
+        : ai.hunter.state === 'EARLY WATCH' ? 'warn' : 'bad'}">${esc(ai.hunter.state)}</div>
+       <div class="ck-ai-hinputs">${ai.hunter.inputs.map((x) =>
+         `<span><b>${esc(x.label)}</b>${esc(x.value)}</span>`).join('')}</div>
+       <p>${esc(ai.hunter.explanation)}</p>`;
+
+    $('ck-ai-supporting').innerHTML = ai.thesis.supporting.map((x) => `<li>${esc(x)}</li>`).join('')
+      || '<li class="ck-ai-none">No supporting evidence at current readings.</li>';
+    $('ck-ai-contradicting').innerHTML = ai.thesis.contradicting.map((x) => `<li>${esc(x)}</li>`).join('')
+      || '<li class="ck-ai-none">No contradicting evidence at current readings.</li>';
+    $('ck-ai-verdict').textContent = ai.thesis.verdict;
+
+    $('ck-ai-caveats').innerHTML = ai.caveats.map((c) =>
+      `<li>${c.ticker ? `<b>${esc(c.ticker)}</b> — ` : ''}${esc(c.text)}</li>`).join('');
+  }
+
+  const AI_NAMES = ['CAPEX INTENSITY', 'FUNDING / CASH BURDEN', 'INCREMENTAL RETURNS',
+    'FINANCING / LEVERAGE', 'SUPPLIER/BUYER DIVERGENCE'];
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('#ck-ai-toggle');
+    if (!b) return;
+    const w = $('ck-ai-why');
+    const open = w.hidden; w.hidden = !open;
+    b.setAttribute('aria-expanded', String(open));
+  });
 
   // ── CARD 1: regime ──────────────────────────────────────────────────
   function cardPhase() {

@@ -44,6 +44,19 @@
 
   <p class="ck-setup" id="ck-setup"></p>
 
+  <!-- AI CAPITAL — two compact lines under MARKET SETUP. Deliberately NOT a
+       sixth card: the executive cockpit stays five cards and readable in
+       about fifteen seconds. Everything detailed lives in the panel far
+       below. -->
+  <div class="ck-ai-line" id="ck-ai-line" hidden>
+    <button class="ck-ai-summary" id="ck-ai-toggle" aria-expanded="false" aria-controls="ck-ai-why">
+      <span class="ck-ai-row"><span class="ck-ai-k">AI CAPITAL</span><span class="ck-ai-v" id="ck-ai-status">—</span></span>
+      <span class="ck-ai-row"><span class="ck-ai-k">TRANSMISSION</span><span class="ck-ai-v" id="ck-ai-transmission">—</span></span>
+      <span class="ck-ai-chev" aria-hidden="true">▾</span>
+    </button>
+    <div class="ck-ai-why" id="ck-ai-why" hidden></div>
+  </div>
+
   <!-- 2. WHAT CHANGED -->
   <section class="ck-panel" aria-label="What changed">
     <div class="ck-panel-head">
@@ -124,6 +137,44 @@
   </section>
 
   <!-- 10. THESIS EVIDENCE -->
+  <!-- AI CAPITAL — detailed panel, below the V1 sections -->
+  <section class="ck-panel" aria-label="AI capital stress" id="ck-ai-panel" hidden>
+    <div class="ck-panel-head">
+      <h2>AI CAPITAL STRESS</h2>
+      <span class="ck-count" id="ck-ai-evidence"></span>
+    </div>
+    <div class="ck-ai-head">
+      <div class="ck-ai-score"><b id="ck-ai-score">—</b><span>/ 5</span></div>
+      <div class="ck-ai-band" id="ck-ai-band">—</div>
+      <div class="ck-ai-asof" id="ck-ai-asof"></div>
+    </div>
+    <div id="ck-ai-components" class="ck-ai-components"></div>
+
+    <h3 class="ck-sub">COMPANIES</h3>
+    <div class="ck-table-wrap"><table class="ck-table ck-ai-table" id="ck-ai-companies"></table></div>
+    <ol class="ck-ai-notes" id="ck-ai-notes"></ol>
+
+    <h3 class="ck-sub">SUPPLIER SIGNAL</h3>
+    <div id="ck-ai-supplier" class="ck-ai-supplier"></div>
+
+    <h3 class="ck-sub">AI → CREDIT TRANSMISSION</h3>
+    <div id="ck-ai-map" class="ck-ai-map"></div>
+    <p class="ck-ai-maptext" id="ck-ai-maptext"></p>
+
+    <h3 class="ck-sub">HUNTER × AI CAPITAL</h3>
+    <div id="ck-ai-hunter" class="ck-ai-hunter"></div>
+
+    <h3 class="ck-sub">NOBLE / CHANOS THESIS TEST</h3>
+    <div class="ck-ai-thesis">
+      <div><h4 class="ck-ai-for">SUPPORTING</h4><ul id="ck-ai-supporting"></ul></div>
+      <div><h4 class="ck-ai-against">CONTRADICTING</h4><ul id="ck-ai-contradicting"></ul></div>
+    </div>
+    <p class="ck-ai-verdict" id="ck-ai-verdict"></p>
+
+    <h3 class="ck-sub">DATA CAVEATS</h3>
+    <ul class="ck-ai-caveats" id="ck-ai-caveats"></ul>
+  </section>
+
   <section class="ck-panel" aria-label="Supporting and contradicting evidence">
     <div class="ck-panel-head"><h2>SUPPORTING vs CONTRADICTING EVIDENCE</h2></div>
     <p class="ck-note">Three distinct propositions, deliberately not merged: <b>Hunter</b> (melt-up → deflationary

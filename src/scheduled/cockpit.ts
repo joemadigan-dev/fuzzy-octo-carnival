@@ -8,6 +8,8 @@ import { buildCockpit, type Cockpit } from '../scoring/index.ts';
 import { systemHealth } from '../scoring/health.ts';
 import type { Phase } from '../scoring/phase.ts';
 import type { Snapshot } from '../scoring/whatchanged.ts';
+import { buildAiCapital, saveAiCapital, type AiCapitalView } from './aicapital.ts';
+import { aiCapitalChanges } from '../scoring/aichanged.ts';
 import type { Env } from './index.ts';
 
 /** How much snapshot history "What Changed?" needs — a month plus slack. */
@@ -54,6 +56,42 @@ export async function runCockpit(
   // Health is assembled here because this is where the run's own outcome
   // and the loaded series are both in hand. It rides the cockpit payload
   // rather than needing its own table or request.
+  // ── V2: AI CAPITAL ───────────────────────────────────────────────────
+  // Built here so it rides the cockpit payload rather than needing its own
+  // request, and inside its own try so that a fault in the newest part of
+  // the system cannot take down the five cards that were working before it
+  // existed.
+  let ai: AiCapitalView | null = null;
+  try {
+    ai = await buildAiCapital(env, seriesMap, nowIso, {
+      meltup: c.meltup.score,
+      credit: c.credit.score,
+      bustOnset: c.bust.onset,
+      liquidityRegime: c.liquidity.regime,
+    });
+    if (ai) {
+      await saveAiCapital(env, ai, today);
+      log.push(`ai capital: ${ai.score.score}/5 ${ai.score.status} · transmission ${ai.transmission.status}`
+        + ` · supplier ${ai.supplier.state} · hunter ${ai.hunter.state}`);
+    } else {
+      log.push('ai capital: no company filings stored yet — panel reports UNKNOWN');
+    }
+  } catch (e) {
+    log.push(`ai capital: FAILED — ${e}`);
+  }
+
+  // Quarterly fundamentals only enter "What Changed?" when the MODEL
+  // moves. An unchanged filing must not generate an entry every day.
+  let aiChanges: Awaited<ReturnType<typeof aiCapitalChanges>> = [];
+  if (ai) {
+    try {
+      aiChanges = await aiCapitalChanges(env, ai, today);
+      if (aiChanges.length) log.push(`ai capital: ${aiChanges.length} fundamental change(s) ranked into What Changed`);
+    } catch (e) {
+      log.push(`ai capital changes: FAILED — ${e}`);
+    }
+  }
+
   const health = systemHealth({
     nowIso,
     lastRun: opts.lastRun,
@@ -63,8 +101,24 @@ export async function runCockpit(
     lastFailedStage: opts.lastFailedStage,
     seriesMap,
     fetchFailed: opts.fetchFailed,
+    ai: ai ? {
+      ingested: ai.coverage.ingested, total: ai.coverage.total,
+      latestFiled: ai.coverage.latestFiled, ageDays: ai.ageDays,
+      evidenceAvailable: ai.score.evidenceAvailable, evidenceTotal: ai.score.evidenceTotal,
+      status: ai.score.status,
+    } : null,
   });
-  const payload = { ...c, health };
+
+  // The AI fundamentals ride the existing What Changed structure rather
+  // than getting a panel of their own, so one list still answers "what
+  // moved?" across macro and fundamentals alike.
+  if (aiChanges.length) {
+    for (const horizon of ['day', 'week', 'month'] as const) {
+      c.whatChanged[horizon] = [...aiChanges, ...(c.whatChanged[horizon] ?? [])]
+        .sort((a, b) => b.weight - a.weight).slice(0, 8);
+    }
+  }
+  const payload = { ...c, health, aiCapital: ai };
 
   await env.DB.prepare(
     `INSERT INTO cockpit_history

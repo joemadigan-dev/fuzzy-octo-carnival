@@ -181,6 +181,78 @@
     }
   },
 
+  "ai_transmission": {
+    "_comment": [
+      "V2 section 10. The chain AI CAPITAL -> AI CREDIT -> CCC -> BB/B -> HY -> IG,",
+      "each node GREEN / AMBER / RED / UNKNOWN.",
+      "",
+      "THE POINT OF THIS PANEL is to stop an elevated capital-cycle score",
+      "from being read as a credit event. Deteriorating capital economics",
+      "at six companies is not transmission; transmission is those",
+      "economics showing up in what lenders charge. So the credit nodes are",
+      "driven by CREDIT data only, never by the AI Capital score, and",
+      "'TRANSMISSION CONFIRMED' requires evidence from the credit nodes",
+      "themselves.",
+      "",
+      "Spread levels are percent (5.5 = 550bp); moves are percentage points",
+      "over the stated window (0.5 = 50bp)."
+    ],
+    "ai_credit": {
+      "_comment": "Not a market spread — the deployers' own borrowing, from their filings. Net debt against operating cash flow, and how fast borrowings are growing.",
+      "net_debt_ocf_amber": 1.0,
+      "net_debt_ocf_red": 2.0,
+      "debt_growth_amber": 0.25,
+      "debt_growth_red": 0.60
+    },
+    "ccc": { "level_amber": 9.0, "level_red": 11.0, "widen_60d_amber": 0.75, "widen_60d_red": 1.50 },
+    "bb":  { "level_amber": 3.0, "level_red": 4.0,  "widen_60d_amber": 0.40, "widen_60d_red": 0.80 },
+    "hy":  { "level_amber": 4.5, "level_red": 6.0,  "widen_60d_amber": 0.50, "widen_60d_red": 1.00 },
+    "ig":  { "level_amber": 1.3, "level_red": 1.8,  "widen_60d_amber": 0.20, "widen_60d_red": 0.40 },
+    "confirmation": {
+      "_comment": "How many CREDIT nodes (ai_credit excluded — it is the issuers, not the market) must be RED before transmission is called confirmed, and AMBER before it is called forming.",
+      "forming_min_amber": 2,
+      "confirmed_min_red": 2
+    }
+  },
+
+  "ai_supplier": {
+    "_comment": [
+      "V2 section 9. Nvidia's revenue growth against the deployers' aggregate",
+      "capex growth. Both grow together in a working capital cycle; the",
+      "signal is the gap. Fractions, so 0.30 = 30 percentage points."
+    ],
+    "aligned_within": 0.15,
+    "lagging_gap": 0.30,
+    "divergence_gap": 0.30
+  },
+
+  "hunter_ai": {
+    "_comment": [
+      "V2 section 11. Hunter x AI Capital interpretation matrix.",
+      "",
+      "The rule this encodes: elevated AI capital stress with calm credit is",
+      "EARLY WATCH, never a confirmed bust. Progression requires credit to",
+      "move, not merely for capex to look stretched."
+    ],
+    "watch_ai_score": 2.5,
+    "forming_ai_score": 3.0,
+    "forming_credit_score": 1.5,
+    "confirmed_credit_score": 3.0,
+    "confirmed_bust_onset": 2.0
+  },
+
+  "ai_whatchanged": {
+    "_comment": [
+      "V2 section 14. A quarterly fundamental only counts as a change when the",
+      "MODEL moves — a new filing that leaves every reading where it was is",
+      "not news, and must not generate a daily entry."
+    ],
+    "score_move": 0.5,
+    "capex_ocf_cross": 1.0,
+    "net_debt_ocf_cross": 1.5,
+    "incr_return_cross": 0.10
+  },
+
   "alerts": {
     "_comment": "Section 17. The alerts table PK (date, kind, key) is the dedup mechanism.",
     "target_within_pct": 10,

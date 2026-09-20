@@ -311,3 +311,161 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   .ck-card { transition: background 120ms ease; }
 }
+
+/* ── AI CAPITAL ──────────────────────────────────────────────────────────
+   Two compact lines in the executive view and a full panel far below. The
+   executive addition is deliberately typographic rather than a card: the
+   top screen has to stay readable in about fifteen seconds, and a sixth
+   card would break that regardless of what it contained. */
+
+.ck-ai-line { margin: 10px 0 18px; }
+.ck-ai-summary {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  width: 100%; text-align: left; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--rule); border-left-width: 3px;
+  border-radius: 3px; padding: 10px 12px; color: var(--dim);
+  font-family: var(--font-label); font-size: 13px; letter-spacing: .06em;
+}
+.ck-ai-summary:hover { background: var(--panel-hi); }
+.ck-ai-row { display: flex; align-items: baseline; gap: 9px; }
+.ck-ai-k { color: var(--dimmer); text-transform: uppercase; }
+.ck-ai-v { font-family: var(--font-num); font-size: 14px; letter-spacing: 0; color: var(--ink); }
+.ck-ai-v[data-band="green"]   { color: var(--ok); }
+.ck-ai-v[data-band="amber"]   { color: var(--watch); }
+.ck-ai-v[data-band="red"]     { color: var(--crit); }
+.ck-ai-v[data-band="unknown"] { color: var(--neutral); }
+.ck-ai-chev { margin-left: auto; color: var(--dimmer); }
+.ck-ai-summary[aria-expanded="true"] .ck-ai-chev { transform: rotate(180deg); }
+
+.ck-ai-why {
+  border: 1px solid var(--rule); border-top: 0; border-radius: 0 0 3px 3px;
+  padding: 12px; background: var(--panel); font-size: 13.5px; line-height: 1.55;
+}
+.ck-ai-why p { margin: 8px 0 0; color: var(--dim); }
+.ck-ai-comprow { display: flex; flex-wrap: wrap; gap: 8px; }
+.ck-ai-comp {
+  display: flex; align-items: baseline; gap: 7px; padding: 5px 9px;
+  background: var(--panel-hi); border-radius: 3px;
+  font-family: var(--font-label); font-size: 11.5px; letter-spacing: .05em; color: var(--dimmer);
+}
+.ck-ai-comp .ck-ai-d { font-family: var(--font-num); font-size: 13px; color: var(--ink); letter-spacing: 0; }
+.ck-ai-total { background: transparent; border: 1px solid var(--rule); }
+.ck-ai-jump a { color: var(--dim); }
+
+/* panel */
+.ck-ai-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.ck-ai-score { font-family: var(--font-num); display: flex; align-items: baseline; gap: 5px; }
+.ck-ai-score b { font-size: 40px; line-height: 1; color: var(--ink); font-weight: 500; }
+.ck-ai-score span { color: var(--dimmer); font-size: 15px; }
+.ck-ai-band {
+  font-family: var(--font-label); font-size: 14px; letter-spacing: .09em;
+  padding: 3px 10px; border-radius: 3px; border: 1px solid currentColor;
+}
+.ck-ai-band[data-band="green"]   { color: var(--ok); }
+.ck-ai-band[data-band="amber"]   { color: var(--watch); }
+.ck-ai-band[data-band="red"]     { color: var(--crit); }
+.ck-ai-band[data-band="unknown"] { color: var(--neutral); }
+.ck-ai-asof { margin-left: auto; color: var(--dimmer); font-size: 12px; font-family: var(--font-num); }
+
+.ck-sub {
+  font-family: var(--font-label); font-size: 12px; letter-spacing: .12em;
+  color: var(--dimmer); margin: 22px 0 9px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--rule); text-transform: uppercase;
+}
+
+.ck-ai-components { display: grid; gap: 8px; }
+.ck-ai-component {
+  border-left: 2px solid var(--rule); padding: 7px 0 7px 11px;
+  font-size: 13.5px; line-height: 1.5;
+}
+.ck-ai-component.is-unknown { border-left-color: var(--neutral); opacity: .78; }
+.ck-ai-component p { margin: 4px 0 0; color: var(--dim); }
+.ck-ai-clabel { display: flex; align-items: baseline; gap: 10px; }
+.ck-ai-clabel b {
+  font-family: var(--font-label); font-size: 12px; letter-spacing: .08em; color: var(--ink);
+}
+.ck-ai-cd { font-family: var(--font-num); font-size: 13px; color: var(--watch); }
+
+.ck-ai-table { font-size: 13px; }
+.ck-ai-table th { white-space: nowrap; }
+.ck-ai-table tr.is-flagged { background: rgba(229, 72, 77, .07); }
+.ck-ai-tick { white-space: nowrap; }
+.ck-ai-role { color: var(--dimmer); font-size: 10.5px; margin-left: 6px; text-transform: uppercase; }
+.ck-ai-note { color: var(--watch); cursor: help; margin-left: 4px; font-size: 9.5px; }
+.ck-ai-unk { color: var(--neutral); font-size: 11px; letter-spacing: .05em; cursor: help; }
+.ck-ai-period { color: var(--dimmer); font-family: var(--font-num); font-size: 11.5px; }
+.ck-ai-period a { color: var(--dim); }
+.ck-ai-flag {
+  display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 2px;
+  font-family: var(--font-label); font-size: 10px; letter-spacing: .08em; cursor: help;
+}
+.ck-ai-flag[data-f="stress"]  { background: rgba(229, 72, 77, .18); color: var(--crit); }
+.ck-ai-flag[data-f="outlier"] { background: rgba(232, 179, 58, .16); color: var(--watch); }
+.ck-ai-notes { margin: 10px 0 0; padding-left: 18px; color: var(--dim); font-size: 12.5px; line-height: 1.6; }
+.ck-ai-notes b { color: var(--ink); font-weight: 500; }
+
+.ck-ai-supstate, .ck-ai-hstate {
+  display: inline-block; font-family: var(--font-label); font-size: 15px; letter-spacing: .1em;
+  padding: 4px 12px; border-radius: 3px; border: 1px solid currentColor; margin-bottom: 10px;
+}
+.ck-ai-supstate[data-s="ok"]   { color: var(--ok); }
+.ck-ai-supstate[data-s="warn"] { color: var(--watch); }
+.ck-ai-hstate[data-s="ok"]   { color: var(--ok); }
+.ck-ai-hstate[data-s="warn"] { color: var(--watch); }
+.ck-ai-hstate[data-s="bad"]  { color: var(--crit); }
+.ck-ai-supnums, .ck-ai-hinputs { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 8px; }
+.ck-ai-supnums span, .ck-ai-hinputs span {
+  display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--font-num); font-size: 14px; color: var(--ink);
+}
+.ck-ai-supnums b, .ck-ai-hinputs b {
+  font-family: var(--font-label); font-size: 10.5px; letter-spacing: .07em;
+  color: var(--dimmer); font-weight: 400; text-transform: uppercase;
+}
+.ck-ai-supplier p, .ck-ai-hunter p { margin: 0; color: var(--dim); font-size: 13.5px; line-height: 1.55; }
+
+.ck-ai-map { display: flex; align-items: stretch; flex-wrap: wrap; gap: 6px; }
+.ck-ai-node {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: help;
+  padding: 8px 11px; border-radius: 3px; border: 1px solid var(--rule); background: var(--panel-hi);
+  min-width: 78px; flex: 1 1 auto;
+}
+.ck-ai-node b { font-family: var(--font-label); font-size: 11px; letter-spacing: .07em; color: var(--ink); }
+.ck-ai-node i { font-family: var(--font-num); font-style: normal; font-size: 11px; }
+.ck-ai-node[data-s="green"]   { border-color: rgba(53,176,122,.5); } .ck-ai-node[data-s="green"] i   { color: var(--ok); }
+.ck-ai-node[data-s="amber"]   { border-color: rgba(232,179,58,.5); } .ck-ai-node[data-s="amber"] i   { color: var(--watch); }
+.ck-ai-node[data-s="red"]     { border-color: rgba(229,72,77,.55); } .ck-ai-node[data-s="red"] i     { color: var(--crit); }
+.ck-ai-node[data-s="unknown"] { border-style: dashed; }              .ck-ai-node[data-s="unknown"] i { color: var(--neutral); }
+.ck-ai-arrow { align-self: center; color: var(--dimmer); }
+.ck-ai-maptext { margin: 10px 0 0; color: var(--dim); font-size: 13.5px; line-height: 1.55; }
+
+.ck-ai-thesis { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.ck-ai-thesis ul { margin: 0; padding-left: 17px; }
+.ck-ai-thesis li { color: var(--dim); font-size: 13px; line-height: 1.55; margin-bottom: 7px; }
+.ck-ai-for, .ck-ai-against {
+  font-family: var(--font-label); font-size: 11.5px; letter-spacing: .09em; margin: 0 0 7px;
+}
+.ck-ai-for { color: var(--stress); }
+.ck-ai-against { color: var(--ok); }
+.ck-ai-none { color: var(--dimmer); font-style: italic; }
+.ck-ai-verdict {
+  margin: 14px 0 0; padding: 10px 12px; background: var(--panel-hi); border-radius: 3px;
+  color: var(--ink); font-size: 13.5px; line-height: 1.6;
+}
+.ck-ai-caveats { margin: 0; padding-left: 17px; color: var(--dimmer); font-size: 12.5px; line-height: 1.6; }
+.ck-ai-caveats b { color: var(--dim); font-weight: 500; }
+
+@media (max-width: 720px) {
+  .ck-ai-thesis { grid-template-columns: 1fr; gap: 14px; }
+  .ck-ai-summary { gap: 6px 14px; }
+  .ck-ai-asof { margin-left: 0; width: 100%; }
+  .ck-ai-map { gap: 5px; }
+  .ck-ai-node { min-width: 0; padding: 7px 8px; }
+  .ck-ai-arrow { display: none; }
+  .ck-ai-score b { font-size: 34px; }
+}
+
+/* The header is sticky, so an in-page jump to the AI panel would land with
+   its heading hidden underneath it. */
+#ck-ai-panel { scroll-margin-top: 64px; }
+@media (max-width: 720px) { #ck-ai-panel { scroll-margin-top: 84px; } }
