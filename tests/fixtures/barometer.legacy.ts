@@ -1,3 +1,11 @@
+// FROZEN SNAPSHOT of the pre-optimisation barometer, kept ONLY so the
+// optimised implementation can be proved to produce the same numbers on
+// real stored history. Not imported by the Worker and not deployed.
+//
+// Deliberately unmodified apart from import paths and this header: its
+// value as a reference depends on it being what actually ran in
+// production at commit 6c9e365.
+
 // THE BAROMETER — two-layer regime engine with concentration diagnostics.
 // Runs in the cron job only; the request path reads finished rows.
 //
@@ -6,16 +14,15 @@
 // Sub-index normalisation is the anti-concentration mechanism: a series
 // appearing in three inputs cannot triple-count its way into the layer.
 
-import type { Point } from '../sources/types.ts';
-import { KPIS, kpiById, type KpiDef, type Freq } from '../registry/kpis.ts';
-import type { SubIndexDef, LayerDef } from '../registry/signal.ts';
+import type { Point } from '../../src/sources/types.ts';
+import { KPIS, kpiById, type KpiDef, type Freq } from '../../src/registry/kpis.ts';
 import {
   LAYERS, Z_WINDOWS, HYSTERESIS_DAYS, MIN_COVERAGE, CORR_FLAG, DIVERGENCE, GAUGE_REF_DATES,
   ZONE_PCTS, ZONE_DEADBAND_PCT, PIT_MIN_OBS, VELOCITY_OBS,
   PRESSURE_REGIMES, ALTITUDE_REGIMES,
   type LayerId, type ZWindow, type PressureRegime, type AltitudeRegime,
-} from '../registry/signal.ts';
-import { rollingZScore, isoDaysAgo } from './stats.ts';
+} from '../../src/registry/signal.ts';
+import { rollingZScore, isoDaysAgo } from '../../src/compute/stats.ts';
 
 export type Regime = PressureRegime | AltitudeRegime;
 
@@ -170,9 +177,8 @@ export const barometerStages = (): Stage[] => lastStages;
 
 interface ZSet {
   def: KpiDef;
-  /** z forward-filled onto the master axis, indexed by axis POSITION.
-   *  NaN where the input has no usable value on that date. */
-  byWindow: Record<ZWindow, Float64Array>;
+  /** date → z, forward-filled onto the master axis (cap by frequency). */
+  byWindow: Record<ZWindow, Map<string, number>>;
 }
 
 export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResult {
@@ -219,144 +225,73 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   for (const r of raw) for (const w of ['2y', '5y'] as ZWindow[]) for (const p of r.z[w]) dateSet.add(p.date);
   const dates = [...dateSet].sort();
 
-  // Calendar day number per axis date, computed ONCE.
-  //
-  // The forward-fill has to decide whether the last observation is too old
-  // to carry forward, which is a calendar-distance question. Asking it as
-  // `last.date >= isoDaysAgo(date, cap)` built a Date, mutated it and
-  // formatted it back to a string for every (input x window x axis date) —
-  // 26 x 2 x 6818 = 354,536 date constructions, which profiling showed to
-  // be 18% of the entire barometer, none of it in the stage that was
-  // blowing the CPU limit. Every axis date's day number is computed once
-  // here instead and the comparison becomes integer arithmetic.
-  const axisDay = new Int32Array(dates.length);
-  const dayOf = new Map<string, number>();
-  for (let i = 0; i < dates.length; i++) {
-    const d = Math.round(Date.parse(dates[i] + 'T00:00:00Z') / 86400000);
-    axisDay[i] = d;
-    dayOf.set(dates[i], d);
-  }
-
-  /** Forward-fill one z series onto the axis as a dense Float64Array.
-   *
-   *  NaN means "no value on this date", which is what a Map miss used to
-   *  mean. Dense typed arrays rather than Map<string, number> because the
-   *  hot loops below index by axis position: string hashing was showing up
-   *  both as its own cost and as garbage-collector pressure. */
-  const ffill = (z: Point[], cap: number): Float64Array => {
-    const out = new Float64Array(dates.length).fill(NaN);
-    let i = 0;
-    let lastVal = 0;
-    let lastDay = -Infinity;
-    let have = false;
-    for (let d = 0; d < dates.length; d++) {
-      while (i < z.length && z[i].date <= dates[d]) {
-        lastVal = z[i].value;
-        lastDay = dayOf.get(z[i].date) ?? Math.round(Date.parse(z[i].date + 'T00:00:00Z') / 86400000);
-        have = true;
-        i++;
-      }
-      if (have && lastDay >= axisDay[d] - cap) out[d] = lastVal;
-    }
-    return out;
-  };
-
   // forward-fill each input's z onto the axis
   const zsets: ZSet[] = raw.map((r) => {
-    const cap = FFILL_CAP[r.def.freq ?? 'daily'];
-    return { def: r.def, byWindow: { '2y': ffill(r.z['2y'], cap), '5y': ffill(r.z['5y'], cap) } };
+    const byWindow = { '2y': new Map<string, number>(), '5y': new Map<string, number>() };
+    for (const w of ['2y', '5y'] as ZWindow[]) {
+      const cap = FFILL_CAP[r.def.freq ?? 'daily'];
+      let i = 0;
+      let last: Point | null = null;
+      for (const date of dates) {
+        while (i < r.z[w].length && r.z[w][i].date <= date) { last = r.z[w][i]; i++; }
+        if (last && last.date >= isoDaysAgo(date, cap)) byWindow[w].set(date, last.value);
+      }
+    }
+    return { def: r.def, byWindow };
   });
   const zByInput = new Map(zsets.map((z) => [z.def.id, z]));
 
   stage('ffill_axis', `${dates.length} dates`);
 
-  // ── sub-index construction ───────────────────────────────────────────
-  // One sub-index, z-normalised against its own trailing distribution,
-  // as a dense axis-aligned array (NaN = not defined on that date).
-  //
-  // The sub is first built on the dates where enough of its members are
-  // present, and the rolling normalisation runs over THAT CONDENSED
-  // sequence — consecutive present values, not the full axis — which is
-  // what the original did by passing a gap-free Point[] to rollingZScore.
-  // The arithmetic below reproduces rollingZScore exactly, including its
-  // warm-up rule, and scatters the result back to axis positions.
-  function subIndex(sub: SubIndexDef, w: ZWindow, exclude?: string): Float64Array | null {
-    const ms = members.filter((m) => m.subIndex === sub.id && m.id !== exclude);
-    const total = ms.reduce((acc, m) => acc + (m.subWeight ?? 1), 0);
-    if (!ms.length || total <= 0) return null;
-
-    // member arrays and their fixed weights, hoisted out of the date loop
-    const arrs = ms.map((m) => zByInput.get(m.id)!.byWindow[w]);
-    const wgts = ms.map((m) => (m.subWeight ?? 1) / total);
-    const signs = ms.map((m) => m.subSign ?? 1);
-
-    const rawIdx = new Int32Array(dates.length);
-    const rawVal = new Float64Array(dates.length);
-    let n = 0;
-    for (let d = 0; d < dates.length; d++) {
-      let sum = 0, covered = 0;
-      for (let k = 0; k < arrs.length; k++) {
-        const z = arrs[k][d];
-        if (!Number.isNaN(z)) { sum += wgts[k] * signs[k] * z; covered += wgts[k]; }
-      }
-      if (covered >= MIN_COVERAGE) { rawIdx[n] = d; rawVal[n] = sum / covered; n++; }
-    }
-
-    const out = new Float64Array(dates.length).fill(NaN);
-    const window = Z_WINDOWS[w].daily;
-    const warm = Math.min(window, 60);
-    let acc = 0, accSq = 0;
-    for (let k = 0; k < n; k++) {
-      const v = rawVal[k];
-      acc += v; accSq += v * v;
-      if (k >= window) { const o = rawVal[k - window]; acc -= o; accSq -= o * o; }
-      const m = Math.min(k + 1, window);
-      if (m >= warm) {
-        const mean = acc / m;
-        const variance = Math.max(0, accSq / m - mean * mean);
-        const sd = Math.sqrt(variance);
-        out[rawIdx[k]] = sd > 1e-12 ? (v - mean) / sd : 0;
-      }
-    }
-    return out;
-  }
-
-  /** Layer score from already-built sub-indices. */
-  function layerScores(layer: LayerDef, subZ: (Float64Array | null)[]): {
-    scores: (number | null)[]; coverage: number[];
-  } {
-    const scores: (number | null)[] = new Array(dates.length);
-    const coverage: number[] = new Array(dates.length);
-    for (let d = 0; d < dates.length; d++) {
-      let sum = 0, covered = 0;
-      for (let si = 0; si < layer.subs.length; si++) {
-        const arr = subZ[si];
-        if (!arr) continue;
-        const z = arr[d];
-        if (!Number.isNaN(z)) { sum += layer.subs[si].weight * z; covered += layer.subs[si].weight; }
-      }
-      coverage[d] = covered;
-      scores[d] = covered >= MIN_COVERAGE ? (layer.polarity * sum) / covered : null;
-    }
-    return { scores, coverage };
-  }
-
   // ── full pipeline for one (layer, window), optionally excluding an input
   function layerSeries(layerId: LayerId, w: ZWindow, exclude?: string): {
     scores: (number | null)[]; raws: (Regime | null)[]; regimes: (Regime | null)[];
     pit: (number | null)[]; coverage: number[]; vel: (number | null)[];
-    subZ: (Float64Array | null)[];
-    subZAt: Map<string, Float64Array>; // subId → axis-aligned z
+    subZAt: Map<string, Map<string, number>>; // subId → date → z
   } {
     const layer = LAYERS.find((l) => l.id === layerId)!;
-    const subZ = layer.subs.map((sub) => subIndex(sub, w, exclude));
-    const subZAt = new Map<string, Float64Array>();
-    layer.subs.forEach((sub, i) => { if (subZ[i]) subZAt.set(sub.id, subZ[i]!); });
-    const { scores, coverage } = layerScores(layer, subZ);
+    const subZAt = new Map<string, Map<string, number>>();
 
+    for (const sub of layer.subs) {
+      const ms = members.filter((m) => m.subIndex === sub.id && m.id !== exclude);
+      const total = ms.reduce((s, m) => s + (m.subWeight ?? 1), 0);
+      if (!ms.length || total <= 0) continue;
+      const rawSub: Point[] = [];
+      for (const date of dates) {
+        let sum = 0, covered = 0;
+        for (const m of ms) {
+          const z = zByInput.get(m.id)!.byWindow[w].get(date);
+          if (z !== undefined) {
+            const wgt = (m.subWeight ?? 1) / total;
+            sum += wgt * (m.subSign ?? 1) * z;
+            covered += wgt;
+          }
+        }
+        if (covered >= MIN_COVERAGE) rawSub.push({ date, value: sum / covered });
+      }
+      // normalise the sub-index against its own trailing distribution
+      const norm = rollingZScore(rawSub, Z_WINDOWS[w].daily);
+      subZAt.set(sub.id, new Map(norm.map((p) => [p.date, p.value])));
+    }
+
+    const scores: (number | null)[] = [];
+    const coverage: number[] = [];
+    for (const date of dates) {
+      let sum = 0, covered = 0;
+      for (const sub of layer.subs) {
+        const z = subZAt.get(sub.id)?.get(date);
+        if (z !== undefined) { sum += sub.weight * z; covered += sub.weight; }
+      }
+      coverage.push(covered);
+      scores.push(covered >= MIN_COVERAGE ? (layer.polarity * sum) / covered : null);
+    }
+
+    // Zones are percentile bands, and the percentile that decides a
+    // historical date's zone must be point-in-time — otherwise every
+    // pre-2020 classification is made with knowledge of 2020.
     const pit = pitPercentiles(scores);
     const raws = pit.map((p) => (p === null ? null : zoneOf(layerId, p)));
-    return { scores, raws, regimes: regimePath(layerId, pit), pit, coverage, vel: velocitySeries(scores), subZ, subZAt };
+    return { scores, raws, regimes: regimePath(layerId, pit), pit, coverage, vel: velocitySeries(scores), subZAt };
   }
 
   const base: Record<LayerId, Record<ZWindow, ReturnType<typeof layerSeries>>> = {
@@ -412,11 +347,8 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
         if (r !== null && prev !== null && r !== prev) {
           const drivers = layer.subs
             .map((sub) => {
-            const arr = b.subZAt.get(sub.id);
-              const z = arr ? arr[i] : NaN;
-              return arr === undefined || Number.isNaN(z)
-                ? null
-                : { id: sub.id, z: r4(z)!, contribution: r4(layer.polarity * sub.weight * z)! };
+              const z = b.subZAt.get(sub.id)?.get(dates[i]);
+              return z === undefined ? null : { id: sub.id, z: r4(z)!, contribution: r4(layer.polarity * sub.weight * z)! };
             })
             .filter((d): d is NonNullable<typeof d> => d !== null)
             .sort((x, y) => Math.abs(y.contribution) - Math.abs(x.contribution));
@@ -435,17 +367,14 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
       const b = base[layer.id][w];
       const li = lastNonNull(b.scores);
       const subs: SubDetail[] = layer.subs.map((sub) => {
-        const zArr = b.subZAt.get(sub.id);
-        const z = li >= 0 && zArr
-          ? (Number.isNaN(zArr[li]) ? lastFiniteValue(zArr) : zArr[li])
-          : undefined;
+        const zMap = b.subZAt.get(sub.id);
+        const z = li >= 0 ? (zMap?.get(dates[li]) ?? lastMapValue(zMap)) : undefined;
         const ms = members.filter((m) => m.subIndex === sub.id);
         const total = ms.reduce((s, m) => s + (m.subWeight ?? 1), 0) || 1;
         const inputs: BaroInputDetail[] = ms.map((m) => {
           const pts = seriesMap.get(m.id) ?? [];
           const latest = pts.length ? pts[pts.length - 1] : null;
-          const ziRaw = li >= 0 ? zByInput.get(m.id)!.byWindow[w][li] : NaN;
-          const zi = Number.isNaN(ziRaw) ? undefined : ziRaw;
+          const zi = li >= 0 ? zByInput.get(m.id)!.byWindow[w].get(dates[li]) : undefined;
           const wgt = (m.subWeight ?? 1) / total;
           return {
             id: m.id,
@@ -488,8 +417,14 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   for (const def of observed) {
     const pts = seriesMap.get(def.id) ?? [];
     const z5 = rollingZScore(pts, Z_WINDOWS['5y'][def.freq ?? 'daily']);
-    const arr = ffill(z5, FFILL_CAP[def.freq ?? 'daily']);
-    zByInput.set(def.id, { def, byWindow: { '2y': arr, '5y': arr } });
+    const cap = FFILL_CAP[def.freq ?? 'daily'];
+    const map = new Map<string, number>();
+    let i = 0, last: Point | null = null;
+    for (const date of dates) {
+      while (i < z5.length && z5[i].date <= date) { last = z5[i]; i++; }
+      if (last && last.date >= isoDaysAgo(date, cap)) map.set(date, last.value);
+    }
+    zByInput.set(def.id, { def, byWindow: { '2y': map, '5y': map } });
   }
 
   const ids = [...members.map((m) => m.id), ...observed.map((o) => o.id)];
@@ -497,7 +432,7 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
   const flagged: Diagnostics['corr']['flagged'] = [];
   for (let a = 0; a < ids.length; a++) {
     for (let b2 = a; b2 < ids.length; b2++) {
-      const r = a === b2 ? 1 : pearsonOverDates(zByInput.get(ids[a])!.byWindow['5y'], zByInput.get(ids[b2])!.byWindow['5y']);
+      const r = a === b2 ? 1 : pearsonOverDates(zByInput.get(ids[a])!.byWindow['5y'], zByInput.get(ids[b2])!.byWindow['5y'], dates);
       matrix[a][b2] = r === null ? null : r4(r);
       matrix[b2][a] = matrix[a][b2];
       if (a !== b2 && r !== null && Math.abs(r) >= CORR_FLAG) {
@@ -509,34 +444,13 @@ export function computeBarometer(seriesMap: Map<string, Point[]>): BarometerResu
 
   stage('corr_matrix', `${ids.length} inputs`);
 
-  // ── leave-one-out on the 2y window (the tuning window) ───────────────
-  // Removing one input can only change the SUB-INDEX that input belongs
-  // to. Every other sub-index in the layer is bit-for-bit what the base
-  // run already computed, so recomputing all of them 26 times was pure
-  // repetition — and it is what pushed this stage past the Worker CPU
-  // limit and killed the whole run.
-  //
-  // Each pass now rebuilds exactly one sub-index and reuses the rest from
-  // `base`. What follows (layer score, point-in-time percentile, regime
-  // path) still has to run per pass, because the score genuinely changes;
-  // those are all single passes over the axis. The result is identical,
-  // not approximated: the same numbers enter the same arithmetic in the
-  // same order.
-  //
-  // The per-pass outputs the diagnostics never read — raws, velocity,
-  // coverage, the sub map — are not built either.
+  // leave-one-out on the 2y window (the tuning window)
   const loo: Diagnostics['loo'] = [];
   for (const m of members) {
-    const layer = LAYERS.find((l) => l.subs.some((sub) => sub.id === m.subIndex));
-    if (!layer) continue;
-    const layerId = layer.id;
+    const layerId = LAYERS.find((l) => l.subs.some((s) => s.id === m.subIndex))?.id;
+    if (!layerId) continue;
     const b = base[layerId]['2y'];
-    const si = layer.subs.findIndex((sub) => sub.id === m.subIndex);
-    const subZ = b.subZ.slice();
-    subZ[si] = subIndex(layer.subs[si], '2y', m.id);
-    const { scores: vScores } = layerScores(layer, subZ);
-    const vRegimes = regimePath(layerId, pitPercentiles(vScores));
-    const v = { scores: vScores, regimes: vRegimes };
+    const v = layerSeries(layerId, '2y', m.id);
     let both = 0, diff = 0;
     for (let i = 0; i < dates.length; i++) {
       if (b.regimes[i] !== null && v.regimes[i] !== null) {
@@ -747,28 +661,23 @@ function buildGauge(
 function findAnalogues(dates: string[], zsets: ZSet[], spx: Point[]): Analogue[] {
   if (!dates.length) return [];
   const today = dates[dates.length - 1];
-  const ti = dates.length - 1;
-  // The reference vector, paired with the array it came from. zById was
-  // previously called inside the per-date loop, rescanning every zset for
-  // every (date, input) pair; the arrays are hoisted here instead.
-  const current: { a: number; arr: Float64Array }[] = [];
+  const current = new Map<string, number>();
   for (const z of zsets) {
-    const v = z.byWindow['5y'][ti];
-    if (!Number.isNaN(v)) current.push({ a: v, arr: z.byWindow['5y'] });
+    const v = z.byWindow['5y'].get(today);
+    if (v !== undefined) current.set(z.def.id, v);
   }
-  if (current.length < 6) return [];
-  const minDims = Math.ceil(current.length * 0.7);
+  if (current.size < 6) return [];
+  const minDims = Math.ceil(current.size * 0.7);
   const cutoff = isoDaysAgo(today, 180);
 
   const scored: { date: string; sim: number; dims: number }[] = [];
-  for (let di = 0; di < dates.length; di++) {
-    const date = dates[di];
+  for (const date of dates) {
     if (date >= cutoff) continue;
     let dot = 0, na = 0, nb = 0, dims = 0;
-    for (const c of current) {
-      const b = c.arr[di];
-      if (Number.isNaN(b)) continue;
-      dims++; dot += c.a * b; na += c.a * c.a; nb += b * b;
+    for (const [id, a] of current) {
+      const b = zById(zsets, id).get(date);
+      if (b === undefined) continue;
+      dims++; dot += a * b; na += a * a; nb += b * b;
     }
     if (dims < minDims || na < 1e-12 || nb < 1e-12) continue;
     scored.push({ date, sim: dot / Math.sqrt(na * nb), dims });
@@ -796,9 +705,9 @@ function findAnalogues(dates: string[], zsets: ZSet[], spx: Point[]): Analogue[]
   }));
 }
 
-function zById(zsets: ZSet[], id: string): Float64Array {
+function zById(zsets: ZSet[], id: string): Map<string, number> {
   for (const z of zsets) if (z.def.id === id) return z.byWindow['5y'];
-  return new Float64Array(0);
+  return new Map();
 }
 
 function fwdReturn(spx: Point[], from: string, days: number): number | null {
@@ -969,11 +878,11 @@ function quantile(sorted: number[], pct: number): number {
 }
 
 
-function pearsonOverDates(a: Float64Array, b: Float64Array): number | null {
+function pearsonOverDates(a: Map<string, number>, b: Map<string, number>, dates: string[]): number | null {
   let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i], y = b[i];
-    if (Number.isNaN(x) || Number.isNaN(y)) continue;
+  for (const d of dates) {
+    const x = a.get(d), y = b.get(d);
+    if (x === undefined || y === undefined) continue;
     n++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
   }
   if (n < 60) return null;
@@ -989,10 +898,11 @@ function lastNonNull(arr: (number | null)[]): number {
   return -1;
 }
 
-function lastFiniteValue(a?: Float64Array): number | undefined {
-  if (!a) return undefined;
-  for (let i = a.length - 1; i >= 0; i--) if (!Number.isNaN(a[i])) return a[i];
-  return undefined;
+function lastMapValue(m?: Map<string, number>): number | undefined {
+  if (!m || m.size === 0) return undefined;
+  let v: number | undefined;
+  for (const x of m.values()) v = x;
+  return v;
 }
 
 function r4(n: number | null | undefined): number | null {
