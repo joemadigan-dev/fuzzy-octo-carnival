@@ -448,6 +448,30 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   }
   mark('cockpit');
 
+  // ── 5b. SEC company fundamentals ─────────────────────────────────────
+  // BEFORE the barometer, not after. This was placed last on the
+  // reasoning that a 3-5MB XBRL parse is the newest and largest piece of
+  // work in the run, so it should sit where its own overrun could not
+  // hurt anything else. That was the wrong way round: the barometer's
+  // leave-one-out stage exceeds the CPU limit often enough that the
+  // isolate is killed before the pipeline ever reaches here, and a stage
+  // that never runs is worse than one that occasionally costs something.
+  // The cockpit was moved ahead of the barometer for exactly this reason;
+  // this is the same lesson applied to the same cause.
+  //
+  // Measured cost is ~0.6s of CPU for all six companies, against the
+  // barometer's several seconds, so the risk it adds to the stages after
+  // it is small and bounded. It needs nothing from the barometer.
+  //
+  // Quarterly data on an hourly cron: one company per run, re-checked
+  // roughly daily, and an unchanged extraction writes nothing.
+  try {
+    log.push(...await ingestSec(env, nowIso, nowMs));
+  } catch (e) {
+    log.push(`sec: FAILED — ${e}`);
+  }
+  mark('sec');
+
   // ── 6. THE BAROMETER: two layers + backtest + diagnostics ────────────
   let baroResult: BarometerResult | null = null;
   try {
@@ -610,22 +634,6 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     log.push(`journal review: FAILED — ${e}`);
   }
   mark('accountability');
-
-  // ── 8. SEC company fundamentals ──────────────────────────────────────
-  // LAST, deliberately. This stage downloads and parses a 3–5MB XBRL
-  // document, which is the largest single piece of work in the run and
-  // the newest — so it goes where a CPU overrun or an isolate kill can
-  // only cost this stage, never the wall, the cockpit, the barometer or
-  // the alerts. It also needs nothing from any of them.
-  //
-  // Quarterly data on an hourly cron: one company per run, re-checked
-  // roughly daily, and an unchanged extraction writes nothing.
-  try {
-    log.push(...await ingestSec(env, nowIso, nowMs));
-  } catch (e) {
-    log.push(`sec: FAILED — ${e}`);
-  }
-  mark('sec');
 
   await env.DB.prepare(
     `INSERT INTO meta (key, value) VALUES ('last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
