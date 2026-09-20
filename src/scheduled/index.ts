@@ -14,7 +14,7 @@ import { computeBarometer, barometerStages, type BarometerResult } from '../comp
 import { computeDisconfirmation } from '../compute/disconfirmation.ts';
 import { computeBaseRates } from '../compute/baserates.ts';
 import { computeImpulseSweep } from '../compute/impulse.ts';
-import { runAlerts, reviewJournal } from './accountability.ts';
+import { runAlertsClassA, runAlertsClassB, markClassBWaiting, reviewJournal } from './accountability.ts';
 import { runCockpit } from './cockpit.ts';
 import { ingestSec } from './sec.ts';
 import { downsample, isoDaysAgo } from '../compute/stats.ts';
@@ -123,11 +123,32 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   const outcomes = new Map<string, FetchOutcome>();
   await Promise.all(fetched.map(async (kpi) => {
     try {
-      const maxRow = await env.DB
-        .prepare('SELECT MAX(date) AS d, COUNT(*) AS n FROM observations WHERE series_id = ?')
-        .bind(kpi.id).first<{ d: string | null; n: number }>();
       const minRows = kpi.freq === 'quarterly' ? 10 : kpi.freq === 'weekly' ? 30
         : kpi.freq === 'monthly' ? 24 : 100;
+
+      // THE COUNT IS BOUNDED, and that is the whole point.
+      //
+      // `SELECT MAX(date), COUNT(*)` reads every row of the series, because
+      // COUNT(*) cannot be answered from an index seek. At sixty series and
+      // an hourly cron that was ~188,000 rows a run and 3.33M rows a day —
+      // 79% of the entire D1 free-tier read allowance, spent on a number
+      // that is only ever used for the predicate `n < minRows`.
+      //
+      // That predicate does not need the count. It needs to know whether
+      // the series has AT LEAST minRows rows, so the subquery stops at
+      // minRows and the comparison stays exact: fewer rows come back only
+      // when there genuinely are fewer. MAX(date) moves into its own
+      // scalar subquery, where the PRIMARY KEY (series_id, date) makes it
+      // a single-row seek.
+      //
+      // Measured on production for `spx` (6,718 stored observations):
+      // 6,719 rows read before, 101 after.
+      const maxRow = await env.DB
+        .prepare(
+          `SELECT (SELECT MAX(date) FROM observations WHERE series_id = ?1) AS d,
+                  (SELECT COUNT(*) FROM (SELECT 1 FROM observations WHERE series_id = ?1 LIMIT ?2)) AS n`,
+        )
+        .bind(kpi.id, minRows).first<{ d: string | null; n: number }>();
 
       // A row count cannot detect a TRUNCATED history. A series backfilled
       // from a shorter window than BACKFILL_START passes every freshness
@@ -472,6 +493,25 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
   }
   mark('sec');
 
+  // ── 5c. CLASS A ALERTS: independent of the barometer ─────────────────
+  // Percentile extremes, the 10Y and HY OAS thresholds, HY widening, VIX,
+  // equity drawdown, six-month momentum, Hunter target proximity, the
+  // WALCL/QE threshold, the credit ladder, the Response Gap, thesis flags
+  // and state bands. None of them needs the barometer, and all of them
+  // stopped firing for a day when it exceeded the CPU limit.
+  //
+  // Moving runAlerts outside the barometer's try/catch was not sufficient
+  // and it is worth being precise about why: a catch handles a THROW, but
+  // exceeding the Worker CPU limit kills the isolate, and nothing after
+  // the kill point executes — no catch, no finally, no checkpoint. The
+  // only real protection is to run first.
+  try {
+    log.push(...await runAlertsClassA(env, seriesMap, prevFlags, currFlags, nowIso));
+  } catch (e) {
+    log.push(`alerts A: FAILED — ${e}`);
+  }
+  mark('alerts_a');
+
   // ── 6. THE BAROMETER: two layers + backtest + diagnostics ────────────
   let baroResult: BarometerResult | null = null;
   try {
@@ -615,18 +655,23 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
     log.push(`barometer stages completed before the failure: ${got.length ? got.map((x) => x.name).join(' → ') : 'none'}`);
     for (const [n, st] of got.entries()) marks.push(`  barometer.${n + 1}.${st.name}`);
   }
-  // ── 7. accountability: alerts + journal review ───────────────────
-  // OUTSIDE the barometer block and after it. An alert should depend only
-  // on the data it actually requires: regime and divergence need the
-  // barometer, everything else needs only seriesMap. `baroResult` is null
-  // when the barometer threw or was killed, and those two families are
-  // skipped rather than the entire alert pass being lost — which is what
-  // used to happen, delaying every threshold and percentile alert until
-  // the next successful barometer run.
+  // ── 7. CLASS B ALERTS: barometer-derived ─────────────────────────────
+  // Regime and divergence are statements about the barometer's own
+  // output, so they run only when there IS a current one. When there is
+  // not, the fact is recorded as WAITING FOR BAROMETER with the timestamp
+  // of the last genuinely current reading — never re-presented from a
+  // stale barometer as though it described today.
+  //
+  // Class A already ran, before the barometer, so a barometer failure
+  // costs only this class.
   try {
-    log.push(...await runAlerts(env, seriesMap, prevFlags, currFlags, nowIso, baroResult));
+    if (baroResult) {
+      log.push(...await runAlertsClassB(env, nowIso, baroResult));
+    } else {
+      log.push(...await markClassBWaiting(env, 'the barometer did not produce a reading this run'));
+    }
   } catch (e) {
-    log.push(`alerts: FAILED — ${e}`);
+    log.push(`alerts B: FAILED — ${e}`);
   }
   try {
     log.push(...await reviewJournal(env, seriesMap));

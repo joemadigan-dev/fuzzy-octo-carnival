@@ -49,78 +49,45 @@ interface Candidate {
  *  unchanged: the barometer-dependent candidates are simply skipped when
  *  there is no barometer, and their latches are left untouched so they are
  *  neither fired nor spuriously re-armed. */
-export async function runAlerts(
+/** Where Class B stands, for the UI. Stored in meta as `alerts_class_b`. */
+export interface ClassBStatus {
+  state: 'current' | 'waiting';
+  /** When Class B last actually ran against a live barometer. */
+  lastCurrentAt: string | null;
+  /** The barometer reading those alerts were derived from. */
+  barometerAt: string | null;
+  /** Set while waiting: why. */
+  reason?: string;
+}
+
+/**
+ * CLASS A — INDEPENDENT ALERTS.
+ *
+ * Everything that can be decided from market, macro and fundamental data
+ * alone: percentile extremes, the 10Y and HY OAS thresholds, HY widening,
+ * VIX, equity drawdown, six-month momentum, Hunter target proximity, the
+ * WALCL/QE threshold, the credit ladder, the Response Gap, thesis flags
+ * and named state bands.
+ *
+ * Runs BEFORE computeBarometer, and that ordering is the entire point. It
+ * was not enough to move this out of the barometer's try/catch: a
+ * try/catch stops a THROW, and what production was actually doing was
+ * exceeding the Worker CPU limit inside the barometer's leave-one-out
+ * stage, which kills the isolate outright. Nothing sequenced after it runs
+ * at all — no catch block, no finally, no checkpoint. Alerts stopped
+ * firing for a day and the failure was invisible from the alerts table.
+ * The only protection against that is to run first.
+ */
+export async function runAlertsClassA(
   env: Env,
   seriesMap: Map<string, Point[]>,
   prevFlags: Map<string, string | null>,
   currFlags: Map<string, string | null>,
   nowIso: string,
-  barometer: BarometerResult | null,
 ): Promise<string[]> {
   const log: string[] = [];
   const today = nowIso.slice(0, 10);
   const candidates: Candidate[] = [];
-  const regimeNow = new Map<string, string>();
-  const hist = barometer?.history ?? [];
-  if (barometer && !hist.length) {
-    log.push('alerts: barometer produced no history — running data-only alerts');
-  }
-  if (!barometer) {
-    log.push('alerts: no barometer this run — running data-only alerts (regime and divergence skipped)');
-  }
-
-  // 1. regime change on either gauge.
-  //
-  //    Fires on the ADOPTED regime differing from the one last alerted,
-  //    not on a change appearing at the end of a freshly recomputed
-  //    history. The barometer rebuilds its whole regime path every run, so
-  //    a marginal input revision can move where a transition lands and
-  //    re-present it as new — which is how ALTITUDE (5y) produced eight
-  //    near-identical alerts in a fortnight. Comparing against the stored
-  //    last-alerted regime is immune to that, because it asks the only
-  //    question that matters to a reader: is the regime now different from
-  //    the one I was last told about?
-  const lastAlerted = new Map<string, string>();
-  if (barometer && hist.length) {
-  const regimeRows = await env.DB.prepare("SELECT key, value FROM meta WHERE key LIKE 'alert_regime:%'")
-    .all<{ key: string; value: string }>();
-  for (const r of regimeRows.results ?? []) lastAlerted.set(r.key.slice(14), r.value);
-
-  for (const layer of ['pressure', 'altitude'] as const) {
-    for (const w of ['2y', '5y'] as const) {
-      const adopted = barometer.detail[layer][w].regime;
-      if (!adopted) continue;
-      const id = `${layer}:${w}`;
-      const was = lastAlerted.get(id) ?? null;
-      regimeNow.set(id, adopted);
-      if (was === adopted) continue;
-      if (was === null) continue;            // first sighting is not a change
-      const c = [...barometer.changes].reverse().find((x) => x.layer === layer && x.window === w && x.to_regime === adopted);
-      const top = (c?.drivers ?? []).slice(0, 3).map((d) => `${d.id} z=${d.z.toFixed(1)}`).join(', ');
-      candidates.push({
-        kind: 'regime',
-        key: id,
-        message: `${layer.toUpperCase()} (${w}) ${was} → ${adopted}`
-          + (c ? ` at ${c.score.toFixed(2)}, adopted ${c.date}` : '')
-          + (top ? ` — drivers: ${top}` : ''),
-        detail: { layer, window: w, from: was, to: adopted, change: c ?? null },
-      });
-    }
-  }
-
-  } // end barometer-dependent regime alerts
-
-  // 2. divergence configuration opening or closing — also barometer-only
-  const prevRow = hist.length >= 2 ? hist[hist.length - 2] : null;
-  if (barometer) for (const w of ['2y', '5y'] as const) {
-    const now = barometer.divergenceNow[w];
-    const was = prevRow ? (w === '2y' ? prevRow.div_2y : prevRow.div_5y) === 1 : false;
-    if (now.active && !was) {
-      candidates.push({ kind: 'divergence', key: `${w}:open`, message: `DIVERGENCE OPENED (${w}) — altitude high while pressure falls; the pre-bust configuration. Was: no divergence.`, detail: now });
-    } else if (!now.active && was) {
-      candidates.push({ kind: 'divergence', key: `${w}:close`, message: `DIVERGENCE CLOSED (${w}) — the high-altitude/low-pressure configuration has resolved.`, detail: now });
-    }
-  }
 
   // 3. any signal input crossing its 95th (or 5th) percentile
   for (const def of KPIS.filter((k) => k.subIndex)) {
@@ -200,6 +167,128 @@ export async function runAlerts(
   candidates.push(...cockpitAlerts(seriesMap));
 
   log.push(...await fire(env, candidates, today, nowIso));
+  log.push(`alerts A: ${candidates.length} conditions evaluated (independent of the barometer)`);
+  return log;
+}
+
+/** meta key holding the Class B status. */
+export const CLASS_B_KEY = 'alerts_class_b';
+
+/** Read the stored Class B status, for the cockpit and the API. */
+export async function classBStatus(env: Env): Promise<ClassBStatus> {
+  const row = await env.DB.prepare('SELECT value FROM meta WHERE key = ?')
+    .bind(CLASS_B_KEY).first<{ value: string }>();
+  if (!row?.value) return { state: 'waiting', lastCurrentAt: null, barometerAt: null, reason: 'no barometer-derived alerts have run yet' };
+  try {
+    return JSON.parse(row.value) as ClassBStatus;
+  } catch {
+    return { state: 'waiting', lastCurrentAt: null, barometerAt: null, reason: 'stored status unreadable' };
+  }
+}
+
+async function putClassBStatus(env: Env, st: ClassBStatus): Promise<void> {
+  await env.DB.prepare(
+    'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+  ).bind(CLASS_B_KEY, JSON.stringify(st)).run();
+}
+
+/**
+ * Mark Class B as NOT CURRENT because the barometer did not produce a
+ * reading this run.
+ *
+ * The previous state is preserved with the timestamp it was computed at,
+ * rather than being cleared or silently re-presented as today's. A
+ * regime alert derived from a barometer that last succeeded fourteen
+ * hours ago is not a statement about now, and the one thing the UI must
+ * never do is show it as though it were.
+ */
+export async function markClassBWaiting(env: Env, reason: string): Promise<string[]> {
+  const prev = await classBStatus(env);
+  await putClassBStatus(env, {
+    state: 'waiting',
+    lastCurrentAt: prev.lastCurrentAt,
+    barometerAt: prev.barometerAt,
+    reason,
+  });
+  return [`alerts B: WAITING FOR BAROMETER — ${reason}`
+    + (prev.barometerAt ? ` (last current ${prev.barometerAt})` : '')];
+}
+
+/**
+ * CLASS B — BAROMETER-DERIVED ALERTS.
+ *
+ * Regime changes and the divergence configuration. These are statements
+ * about the barometer's own output and have no meaning without a current
+ * one, so they run only after it has succeeded. When it has not,
+ * markClassBWaiting records that instead — nothing here is ever derived
+ * from a stale reading.
+ */
+export async function runAlertsClassB(
+  env: Env,
+  nowIso: string,
+  barometer: BarometerResult,
+): Promise<string[]> {
+  const log: string[] = [];
+  const today = nowIso.slice(0, 10);
+  const candidates: Candidate[] = [];
+  const regimeNow = new Map<string, string>();
+  const hist = barometer.history ?? [];
+
+  if (!hist.length) {
+    return markClassBWaiting(env, 'the barometer produced no history');
+  }
+
+  // 1. regime change on either gauge.
+  //
+  //    Fires on the ADOPTED regime differing from the one last alerted,
+  //    not on a change appearing at the end of a freshly recomputed
+  //    history. The barometer rebuilds its whole regime path every run, so
+  //    a marginal input revision can move where a transition lands and
+  //    re-present it as new — which is how ALTITUDE (5y) produced eight
+  //    near-identical alerts in a fortnight. Comparing against the stored
+  //    last-alerted regime is immune to that, because it asks the only
+  //    question that matters to a reader: is the regime now different from
+  //    the one I was last told about?
+  const lastAlerted = new Map<string, string>();
+  const regimeRows = await env.DB.prepare("SELECT key, value FROM meta WHERE key LIKE 'alert_regime:%'")
+    .all<{ key: string; value: string }>();
+  for (const r of regimeRows.results ?? []) lastAlerted.set(r.key.slice(14), r.value);
+
+  for (const layer of ['pressure', 'altitude'] as const) {
+    for (const w of ['2y', '5y'] as const) {
+      const adopted = barometer.detail[layer][w].regime;
+      if (!adopted) continue;
+      const id = `${layer}:${w}`;
+      const was = lastAlerted.get(id) ?? null;
+      regimeNow.set(id, adopted);
+      if (was === adopted) continue;
+      if (was === null) continue;            // first sighting is not a change
+      const c = [...barometer.changes].reverse().find((x) => x.layer === layer && x.window === w && x.to_regime === adopted);
+      const top = (c?.drivers ?? []).slice(0, 3).map((d) => `${d.id} z=${d.z.toFixed(1)}`).join(', ');
+      candidates.push({
+        kind: 'regime',
+        key: id,
+        message: `${layer.toUpperCase()} (${w}) ${was} → ${adopted}`
+          + (c ? ` at ${c.score.toFixed(2)}, adopted ${c.date}` : '')
+          + (top ? ` — drivers: ${top}` : ''),
+        detail: { layer, window: w, from: was, to: adopted, change: c ?? null },
+      });
+    }
+  }
+
+  // 2. divergence configuration opening or closing
+  const prevRow = hist.length >= 2 ? hist[hist.length - 2] : null;
+  for (const w of ['2y', '5y'] as const) {
+    const now = barometer.divergenceNow[w];
+    const was = prevRow ? (w === '2y' ? prevRow.div_2y : prevRow.div_5y) === 1 : false;
+    if (now.active && !was) {
+      candidates.push({ kind: 'divergence', key: `${w}:open`, message: `DIVERGENCE OPENED (${w}) — altitude high while pressure falls; the pre-bust configuration. Was: no divergence.`, detail: now });
+    } else if (!now.active && was) {
+      candidates.push({ kind: 'divergence', key: `${w}:close`, message: `DIVERGENCE CLOSED (${w}) — the high-altitude/low-pressure configuration has resolved.`, detail: now });
+    }
+  }
+
+  log.push(...await fire(env, candidates, today, nowIso));
 
   // Record what the reader has now been told, so the next run compares
   // against it rather than against a rebuilt history.
@@ -208,6 +297,16 @@ export async function runAlerts(
       "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     ).bind(`alert_regime:${id}`, regime).run();
   }
+
+  await putClassBStatus(env, {
+    state: 'current',
+    lastCurrentAt: nowIso,
+    // The newest date the barometer actually has data for — not the
+    // wall-clock time of the run, which would still look current if the
+    // inputs had gone stale.
+    barometerAt: hist.length ? hist[hist.length - 1].date : nowIso,
+  });
+  log.push(`alerts B: current (${candidates.length} barometer-derived conditions evaluated)`);
   return log;
 }
 
