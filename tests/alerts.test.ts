@@ -203,3 +203,80 @@ test('missing series produce no alerts rather than zero-valued ones', async () =
   await runAlertsClassA(env(db), new Map(), new Map(), new Map(), '2026-09-19T12:00:00.000Z');
   assert.equal(inserted.length, 0, 'no data must mean no alert, never a zero reading');
 });
+
+// ── latch release: the six-day duplicate bug ──────────────────────────
+//
+// Found in production, not in a test: four level conditions fired on six
+// consecutive days while zero latches existed in the database. Two faults,
+// both of them releasing a latch on evidence that did not justify it.
+
+test('Class B does not release the latches Class A just wrote', async () => {
+  // The regression introduced by splitting the classes. Class B holds no
+  // stateful conditions, so its `activeNow` is empty — and it used to
+  // delete every latch it found, which was all of Class A's.
+  const { db, meta, inserted } = fakeDb();
+  const m = new Map<string, Point[]>([['hy_oas', spike()]]);
+  await runAlertsClassA(env(db), m, new Map(), new Map(), '2026-09-19T12:00:00.000Z');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'), 'Class A must latch');
+  const afterA = inserted.length;
+
+  const baro = {
+    history: [{ date: '2026-09-18' }, { date: '2026-09-19' }],
+    detail: {
+      pressure: { '2y': { regime: 'FAIR' }, '5y': { regime: 'FAIR' } },
+      altitude: { '2y': { regime: 'HIGH' }, '5y': { regime: 'HIGH' } },
+    },
+    changes: [],
+    divergenceNow: { '2y': { active: false }, '5y': { active: false } },
+  };
+  await runAlertsClassB(env(db), '2026-09-19T12:30:00.000Z', baro as never);
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'),
+    'Class B must leave Class A latches alone — this is what caused six days of duplicates');
+
+  // and the next day must therefore stay silent
+  await runAlertsClassA(env(db), m, new Map(), new Map(), '2026-09-20T12:00:00.000Z');
+  assert.equal(inserted.length, afterA, 'the condition must not re-fire the following day');
+});
+
+test('a condition that could not be evaluated keeps its latch', async () => {
+  // The older fault: a series missing for one run produced no candidate,
+  // which was indistinguishable from the condition having cleared. That is
+  // UNKNOWN being read as FALSE, and it re-armed the alert.
+  const { db, meta, inserted } = fakeDb();
+  const hot = new Map<string, Point[]>([['hy_oas', spike()]]);
+  await runAlertsClassA(env(db), hot, new Map(), new Map(), '2026-09-19T12:00:00.000Z');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'));
+  const afterFirst = inserted.length;
+
+  // next run: the series is absent entirely (a fetch failure)
+  await runAlertsClassA(env(db), new Map(), new Map(), new Map(), '2026-09-20T12:00:00.000Z');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'),
+    'a missing series must not be read as the condition having cleared');
+
+  // and when the data returns, still true, it must not re-announce
+  await runAlertsClassA(env(db), hot, new Map(), new Map(), '2026-09-21T12:00:00.000Z');
+  assert.equal(inserted.length, afterFirst, 'the condition never cleared, so it must not re-fire');
+});
+
+test('a series too short to judge also keeps the latch', async () => {
+  const { db, meta } = fakeDb();
+  const hot = new Map<string, Point[]>([['hy_oas', spike()]]);
+  await runAlertsClassA(env(db), hot, new Map(), new Map(), '2026-09-19T12:00:00.000Z');
+  // 119 observations is below the 120 floor, so the percentile is not judged
+  await runAlertsClassA(env(db), new Map([['hy_oas', spike(119, 1, 1)]]),
+    new Map(), new Map(), '2026-09-20T12:00:00.000Z');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'), 'too little data is not evidence of clearing');
+});
+
+test('a genuinely cleared condition is still released', async () => {
+  // The guard must not be so conservative that latches never clear.
+  const { db, meta } = fakeDb();
+  const hot = new Map<string, Point[]>([['hy_oas', spike()]]);
+  await runAlertsClassA(env(db), hot, new Map(), new Map(), '2026-09-19T12:00:00.000Z');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'));
+
+  const calm = new Map<string, Point[]>([['hy_oas', spike(400, 1, 1)]]);
+  await runAlertsClassA(env(db), calm, new Map(), new Map(), '2026-09-20T12:00:00.000Z');
+  assert.ok(!meta.has('alert_on:input95:hy_oas:hi'),
+    'evaluated and false must still re-arm, or nothing would ever clear again');
+});

@@ -89,10 +89,16 @@ export async function runAlertsClassA(
   const today = nowIso.slice(0, 10);
   const candidates: Candidate[] = [];
 
+  // Conditions this run could actually assess. See the note in fire():
+  // a condition missing from here was not judged false, it was not judged.
+  const evaluated = new Set<string>();
+
   // 3. any signal input crossing its 95th (or 5th) percentile
   for (const def of KPIS.filter((k) => k.subIndex)) {
     const pts = seriesMap.get(def.id) ?? [];
     if (pts.length < 120) continue;
+    evaluated.add(`input95:${def.id}:hi`);
+    evaluated.add(`input95:${def.id}:lo`);
     const now = pctile(pts, pts.length - 1);
     const was = pctile(pts, pts.length - 2);
     const v = pts[pts.length - 1];
@@ -164,9 +170,11 @@ export async function runAlertsClassA(
   }
 
   // § 17 cockpit thresholds, all stateful: these are levels, not events.
-  candidates.push(...cockpitAlerts(seriesMap));
+  const ck = cockpitAlerts(seriesMap);
+  candidates.push(...ck.out);
+  for (const id of ck.evaluated) evaluated.add(id);
 
-  log.push(...await fire(env, candidates, today, nowIso));
+  log.push(...await fire(env, candidates, today, nowIso, evaluated));
   log.push(`alerts A: ${candidates.length} conditions evaluated (independent of the barometer)`);
   return log;
 }
@@ -288,7 +296,10 @@ export async function runAlertsClassB(
     }
   }
 
-  log.push(...await fire(env, candidates, today, nowIso));
+  // Class B holds no stateful conditions, so it passes an empty evaluated
+  // set and therefore releases no latches. Before this, its empty
+  // `activeNow` wiped every latch Class A had just written.
+  log.push(...await fire(env, candidates, today, nowIso, new Set()));
 
   // Record what the reader has now been told, so the next run compares
   // against it rather than against a rebuilt history.
@@ -320,7 +331,10 @@ export async function runAlertsClassB(
  *  latch in `meta`: it fires on the false→true edge and stays silent until
  *  the condition clears. Keys that are no longer active are unlatched here,
  *  which is what re-arms them. */
-async function fire(env: Env, candidates: Candidate[], today: string, nowIso: string): Promise<string[]> {
+async function fire(
+  env: Env, candidates: Candidate[], today: string, nowIso: string,
+  evaluated: Set<string>,
+): Promise<string[]> {
   const log: string[] = [];
   const rows = await env.DB.prepare("SELECT key FROM meta WHERE key LIKE 'alert_on:%'").all<{ key: string }>();
   const latched = new Set((rows.results ?? []).map((r) => r.key.slice(9)));
@@ -347,9 +361,31 @@ async function fire(env: Env, candidates: Candidate[], today: string, nowIso: st
     log.push(`alert [${id}] via ${delivered.join('+') || 'log-only'}: ${c.message}`);
   }
 
-  // re-arm anything that has cleared
+  // ── re-arm what has genuinely cleared ────────────────────────────────
+  // A latch may only be released by a caller that ACTUALLY EVALUATED that
+  // condition this run and found it false. Two separate faults made the
+  // latch useless, and both reduce to releasing on the wrong evidence:
+  //
+  //   1. `latched` is every latch in the database, but `activeNow` only
+  //      holds the candidates passed to THIS call. Once alerts were split
+  //      into Class A and Class B, Class B — which has no stateful
+  //      candidates at all — saw an empty `activeNow` and deleted every
+  //      latch Class A had just written, so every level condition re-fired
+  //      the next day.
+  //
+  //   2. Even before that split, a condition that could not be evaluated
+  //      (its series missing or too short on one run) produced no
+  //      candidate, which was indistinguishable from the condition having
+  //      cleared. One transient data gap therefore re-armed the alert and
+  //      it fired again. That is UNKNOWN being treated as FALSE, which is
+  //      the one thing this system is not allowed to do.
+  //
+  // `evaluated` fixes both: it is the set of conditions this caller could
+  // actually assess. Anything outside it — another class's conditions, or
+  // one whose data was missing — keeps its latch untouched.
   for (const id of latched) {
-    if (activeNow.has(id)) continue;
+    if (!evaluated.has(id)) continue;      // not ours, or not assessable now
+    if (activeNow.has(id)) continue;       // still true
     await env.DB.prepare('DELETE FROM meta WHERE key = ?').bind(`alert_on:${id}`).run();
     log.push(`alert cleared [${id}] — condition no longer holds, re-armed`);
   }
@@ -358,9 +394,14 @@ async function fire(env: Env, candidates: Candidate[], today: string, nowIso: st
 
 /** The thresholds named in section 17 of the brief, read straight from
  *  config/thresholds.json. All level conditions, so all latched. */
-function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
+function cockpitAlerts(m: Map<string, Point[]>): { out: Candidate[]; evaluated: Set<string> } {
   const A = TH.alerts;
   const out: Candidate[] = [];
+  // Every condition this function was ABLE to assess, whether or not it
+  // fired. A condition absent from here was not judged false — it was not
+  // judged at all, and its latch must survive.
+  const evaluated = new Set<string>();
+  const seen = (kind: string, key: string) => { evaluated.add(`${kind}:${key}`); };
   const last = (id: string) => { const p = m.get(id); return p?.length ? p[p.length - 1] : null; };
   const chg = (id: string, days: number) => {
     const p = m.get(id); if (!p?.length) return null;
@@ -377,29 +418,34 @@ function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
   };
 
   const spx6 = pctChg('spx', 182);
+  if (spx6 !== null) seen('meltup', 'ret6m');
   if (spx6 !== null && spx6 >= A.ret6m_pct) {
     out.push({ kind: 'meltup', key: 'ret6m', stateful: true,
       message: `S&P six-month return +${spx6.toFixed(1)}% — at or past the ${A.ret6m_pct}% melt-up alert level.` });
   }
 
   const t10 = last('us10y');
+  if (t10) seen('rates', 'us10y');
   if (t10 && t10.value >= A.us10y_pct) {
     out.push({ kind: 'rates', key: 'us10y', stateful: true,
       message: `10Y Treasury ${t10.value.toFixed(2)}% on ${t10.date} — at or above ${A.us10y_pct}%.` });
   }
 
   const hy = last('hy_oas');
+  if (hy) seen('credit', 'hy_level');
   if (hy && hy.value >= A.hy_level_pct) {
     out.push({ kind: 'credit', key: 'hy_level', stateful: true,
       message: `HY OAS ${hy.value.toFixed(2)}% on ${hy.date} — at or above the ${A.hy_level_pct}% stress level.` });
   }
   const hyRoc = chg('hy_oas', 28);
+  if (hyRoc !== null) seen('credit', 'hy_roc20');
   if (hyRoc !== null && hyRoc * 100 >= A.hy_roc20_bp) {
     out.push({ kind: 'credit', key: 'hy_roc20', stateful: true,
       message: `HY OAS widened ${(hyRoc * 100).toFixed(0)}bp over 20 sessions — past the ${A.hy_roc20_bp}bp alert level.` });
   }
 
   const vix = last('vix');
+  if (vix) seen('vol', 'vix');
   if (vix && vix.value >= A.vix_level) {
     out.push({ kind: 'vol', key: 'vix', stateful: true,
       message: `VIX ${vix.value.toFixed(1)} on ${vix.date} — at or above ${A.vix_level}.` });
@@ -414,6 +460,7 @@ function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
     for (const p of spx) { if (p.date >= from && p.date <= end.date && p.value > peak) peak = p.value; }
     if (Number.isFinite(peak) && peak > 0) {
       const dd = ((end.value - peak) / peak) * 100;
+      seen('internals', 'drawdown');
       if (dd <= A.drawdown_pct) {
         out.push({ kind: 'internals', key: 'drawdown', stateful: true,
           message: `S&P ${dd.toFixed(1)}% from its one-year peak — past the ${A.drawdown_pct}% alert level.` });
@@ -422,6 +469,7 @@ function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
   }
 
   const walcl4 = chg('walcl', 28); // stored in $tn
+  if (walcl4 !== null) seen('liquidity', 'walcl_4w');
   if (walcl4 !== null && walcl4 * 1000 >= A.walcl_4w_bn) {
     out.push({ kind: 'liquidity', key: 'walcl_4w', stateful: true,
       message: `Fed balance sheet +$${(walcl4 * 1000).toFixed(0)}bn over four weeks — past the $${A.walcl_4w_bn}bn alert level.` });
@@ -436,13 +484,14 @@ function cockpitAlerts(m: Map<string, Point[]>): Candidate[] {
     const l = last(id);
     if (!l || l.value <= 0) continue;
     const dist = ((target - l.value) / l.value) * 100;
+    seen('target', id);
     if (dist >= 0 && dist <= A.target_within_pct) {
       out.push({ kind: 'target', key: id, stateful: true,
         message: `${label} is ${dist.toFixed(1)}% from its Hunter target of ${target.toLocaleString('en-US')} (${l.value.toFixed(0)} on ${l.date}) — inside the ${A.target_within_pct}% alert band.` });
     }
   }
 
-  return out;
+  return { out, evaluated };
 }
 
 async function deliver(env: Env, c: Candidate): Promise<string[]> {
