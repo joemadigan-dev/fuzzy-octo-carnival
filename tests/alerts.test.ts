@@ -280,3 +280,30 @@ test('a genuinely cleared condition is still released', async () => {
   assert.ok(!meta.has('alert_on:input95:hy_oas:hi'),
     'evaluated and false must still re-arm, or nothing would ever clear again');
 });
+
+test('a condition latches even when today\'s alert row already exists', async () => {
+  // The third fault, and the reason the first fix appeared not to work:
+  // the latch write sat AFTER an early return taken on the (date, kind,
+  // key) conflict. Once a latch was lost, every later run that day hit
+  // that conflict and bailed before re-latching, so the state could not
+  // heal until the next morning — by which time the alert had re-fired.
+  const { db, meta, inserted } = fakeDb();
+  const m = new Map<string, Point[]>([['hy_oas', spike()]]);
+
+  await runAlertsClassA(env(db), m, new Map(), new Map(), '2026-09-19T12:00:00.000Z');
+  const afterFirst = inserted.length;
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'));
+
+  // simulate the latch being lost mid-day (what the old Class B did)
+  meta.delete('alert_on:input95:hy_oas:hi');
+
+  // a later run on the SAME day: the alert row already exists
+  await runAlertsClassA(env(db), m, new Map(), new Map(), '2026-09-19T18:00:00.000Z');
+  assert.equal(inserted.length, afterFirst, 'it must not announce the same day twice');
+  assert.ok(meta.has('alert_on:input95:hy_oas:hi'),
+    'but it MUST restore the latch, or tomorrow it re-fires');
+
+  // tomorrow: still true, still latched, so silent
+  await runAlertsClassA(env(db), m, new Map(), new Map(), '2026-09-20T12:00:00.000Z');
+  assert.equal(inserted.length, afterFirst, 'the condition never cleared, so it must stay silent');
+});

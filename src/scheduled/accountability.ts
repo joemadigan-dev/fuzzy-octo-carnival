@@ -348,13 +348,25 @@ async function fire(
       `INSERT INTO alerts (date, kind, key, message, detail, delivered, created_at)
        VALUES (?,?,?,?,?,NULL,?) ON CONFLICT(date, kind, key) DO NOTHING`,
     ).bind(today, c.kind, c.key, c.message, JSON.stringify(c.detail ?? null), nowIso).run();
-    if ((res.meta?.changes ?? 0) === 0) continue;
+    const isNew = (res.meta?.changes ?? 0) > 0;
 
+    // LATCH FIRST, and regardless of whether a new row was written.
+    //
+    // The latch records that this condition HOLDS and has been reported,
+    // which is equally true when today's row already exists. Writing it
+    // only on a successful insert left the state unable to heal: once a
+    // latch was lost, every later run that day hit the (date, kind, key)
+    // conflict, bailed out above this point, and so never restored it —
+    // guaranteeing a re-fire the next morning. That is exactly how
+    // 2026-09-24 ended with no latches despite the release fix being live
+    // for most of it.
     if (c.stateful) {
       await env.DB.prepare(
         "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
       ).bind(`alert_on:${id}`, today).run();
     }
+    if (!isNew) continue;            // already reported today — do not deliver twice
+
     const delivered = await deliver(env, c);
     await env.DB.prepare('UPDATE alerts SET delivered = ? WHERE date = ? AND kind = ? AND key = ?')
       .bind(JSON.stringify(delivered), today, c.kind, c.key).run();
