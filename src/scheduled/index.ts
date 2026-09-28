@@ -8,6 +8,7 @@
 
 import { KPIS, BACKFILL_START, type KpiDef } from '../registry/kpis.ts';
 import { SOURCES, type Point } from '../sources/index.ts';
+import { resetFredHostState } from '../sources/fred.ts';
 import { computeDerived } from '../compute/derived.ts';
 import { buildWallState, type WallStateRow } from '../compute/wallstate.ts';
 import { computeBarometer, barometerStages, type BarometerResult } from '../compute/barometer.ts';
@@ -109,6 +110,10 @@ export async function runScheduled(env: Env, nowMs: number = Date.now(), opts: R
       `INSERT INTO meta (key, value) VALUES ('last_run_log', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
     ).bind(JSON.stringify({ at: nowIso, done, marks, failures: log.filter((l) => l.includes('FAILED')) })).run();
   };
+
+  // Module state survives in a warm isolate, so the per-run FRED host flag
+  // is cleared explicitly here rather than left to expire.
+  resetFredHostState();
 
   const fetched = KPIS.filter((k) => k.source && k.seriesId);
   const derived = KPIS.filter((k) => k.derive);

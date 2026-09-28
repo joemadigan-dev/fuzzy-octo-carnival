@@ -9,12 +9,37 @@ import type { DataSource, FetchOpts, Point, SourceEnv } from './types.ts';
 const API = 'https://api.stlouisfed.org/fred/series/observations';
 const CSV = 'https://fred.stlouisfed.org/graph/fredgraph.csv';
 
-/** Thrown when the API failed for a reason the keyless endpoint would hit
- *  too — both are the same origin, so retrying it costs a subrequest and
- *  buys nothing. Worker invocations have a hard subrequest cap, and during
- *  a FRED outage a blind second attempt per series is what exhausts it and
- *  takes down unrelated tiles that had nothing to do with FRED. */
+/** Thrown when the API host returned 5xx.
+ *
+ *  This used to mean "do not try the keyless endpoint, it is the same
+ *  origin and would fail identically". THAT WAS WRONG, and it cost five
+ *  days of frozen credit data to find out: the two endpoints are
+ *  different hosts, and from 2026-09-25 api.stlouisfed.org returned 520
+ *  to this Worker while fred.stlouisfed.org served fresh observations the
+ *  whole time. The dashboard showed CCC at 1093bp while FRED had 1128bp —
+ *  stale data understating the one spread that was moving.
+ *
+ *  The original concern was real, though: Worker invocations have a hard
+ *  subrequest cap, and a blind second attempt for every one of ~46 series
+ *  is what exhausts it and takes down tiles that have nothing to do with
+ *  FRED. So the retry is not per-series. The FIRST 5xx marks the API host
+ *  as unavailable for the rest of the run and every remaining series goes
+ *  straight to the CSV host — one extra subrequest in total, not one per
+ *  series, and the barometer keeps its data. */
 class UpstreamDown extends Error {}
+
+/** Set when the API host 5xxs, cleared at the start of each scheduled run.
+ *
+ *  Module state survives between invocations in a warm isolate, which is
+ *  exactly why it is reset explicitly rather than left to expire: a stale
+ *  flag would silently keep using the fallback long after the API host
+ *  recovered, and the run log would stop saying why. */
+let apiHostDown = false;
+
+/** Called once at the top of each scheduled run. */
+export function resetFredHostState(): void {
+  apiHostDown = false;
+}
 
 async function fetchViaApi(seriesId: string, opts: FetchOpts, key: string): Promise<Point[]> {
   const url = new URL(API);
@@ -71,16 +96,27 @@ async function fetchViaCsv(seriesId: string, opts: FetchOpts): Promise<Point[]> 
 export const fred: DataSource = {
   id: 'fred',
   async fetchSeries(seriesId: string, opts: FetchOpts, env: SourceEnv): Promise<Point[]> {
-    if (env.FRED_API_KEY) {
+    // Once the API host has 5xxed this run, do not keep asking it. Every
+    // later series goes straight to the CSV host, so the fallback costs
+    // one subrequest for the whole run rather than one per series.
+    if (env.FRED_API_KEY && !apiHostDown) {
       try {
         return await fetchViaApi(seriesId, opts, env.FRED_API_KEY);
       } catch (e) {
-        // A 5xx means FRED itself is unwell; the keyless endpoint sits
-        // behind the same origin and would fail identically, so report the
-        // real cause rather than spending a second subrequest to rediscover
-        // it. Anything else (bad key, rate limit, parse) is worth retrying
+        if (e instanceof UpstreamDown) {
+          // The API host is unwell. The CSV host is a DIFFERENT host and
+          // may well be fine — that is the case this exists to handle.
+          apiHostDown = true;
+          try {
+            return await fetchViaCsv(seriesId, opts);
+          } catch (csvErr) {
+            // Both hosts failing IS a FRED-wide outage. Report the real
+            // cause; no further retries for this series.
+            throw new Error(`FRED unavailable on both endpoints for ${seriesId} — API: ${e.message}; CSV: ${csvErr instanceof Error ? csvErr.message : csvErr}`);
+          }
+        }
+        // Anything else (bad key, rate limit, parse) is worth retrying
         // keylessly — it is genuinely a different path to the same data.
-        if (e instanceof UpstreamDown) throw e;
         try {
           return await fetchViaCsv(seriesId, opts);
         } catch (csvErr) {
