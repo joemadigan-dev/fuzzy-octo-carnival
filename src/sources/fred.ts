@@ -9,6 +9,33 @@ import type { DataSource, FetchOpts, Point, SourceEnv } from './types.ts';
 const API = 'https://api.stlouisfed.org/fred/series/observations';
 const CSV = 'https://fred.stlouisfed.org/graph/fredgraph.csv';
 
+/** FRED sits behind Akamai Bot Manager (it sets _abck / bm_sz on
+ *  .stlouisfed.org). A request carrying NO User-Agent — which is exactly
+ *  what the Workers runtime sends, because `fetch` adds none by default —
+ *  has its HTTP/2 stream reset by the edge, and Cloudflare reports that
+ *  reset to the Worker as a 520. Nothing was down. Both hosts served fresh
+ *  data throughout to any client that identified itself.
+ *
+ *  That cost seven days of credit data, and the cost was not cosmetic: on
+ *  2026-09-30 the dashboard read CCC & lower +62bp over 20 sessions,
+ *  3bp under its 65bp trigger, while FRED had +108bp. The Credit Canary
+ *  was being held at CALM by the outage.
+ *
+ *  Measured against fred.stlouisfed.org on 2026-09-30, same container,
+ *  same minute:
+ *    no User-Agent header          000 (stream reset)  4/4
+ *    'Mozilla/5.0 ... Chrome/140'  000 (stream reset)  3/3
+ *    'curl/8.5.0'                  200                 3/3
+ *    'python-requests/2.32'        200                 1/1
+ *    this string                   200                 3/3
+ *
+ *  Note which way round that is. Claiming to be a browser is what gets
+ *  refused, because a browser UA with no browser fingerprint behind it is
+ *  itself the bot signal. Saying plainly what we are, with a URL to
+ *  complain to, is what works — so this must stay an honest identifier.
+ *  Do not dress it up as a browser, and do not vary it per request. */
+const UA = 'the-wall/1.0 (+https://the-wall.joemadigan.workers.dev)';
+
 /** Thrown when the API host returned 5xx.
  *
  *  This used to mean "do not try the keyless endpoint, it is the same
@@ -48,7 +75,9 @@ async function fetchViaApi(seriesId: string, opts: FetchOpts, key: string): Prom
   url.searchParams.set('file_type', 'json');
   if (opts.from) url.searchParams.set('observation_start', opts.from);
   if (opts.to) url.searchParams.set('observation_end', opts.to);
-  const res = await fetch(url.toString(), { headers: { accept: 'application/json' } });
+  const res = await fetch(url.toString(), {
+    headers: { accept: 'application/json', 'user-agent': UA },
+  });
   if (res.status >= 500) throw new UpstreamDown(`FRED API ${res.status} for ${seriesId}`);
   if (!res.ok) throw new Error(`FRED API ${res.status} for ${seriesId}`);
   const body = (await res.json()) as { observations?: { date: string; value: string }[] };
@@ -88,7 +117,9 @@ export function parseFredCsv(text: string, seriesId: string): Point[] {
 }
 
 async function fetchViaCsv(seriesId: string, opts: FetchOpts): Promise<Point[]> {
-  const res = await fetch(fredCsvUrl(seriesId, opts), { headers: { accept: 'text/csv' } });
+  const res = await fetch(fredCsvUrl(seriesId, opts), {
+    headers: { accept: 'text/csv', 'user-agent': UA },
+  });
   if (!res.ok) throw new Error(`FRED csv ${res.status} for ${seriesId}`);
   return parseFredCsv(await res.text(), seriesId);
 }
