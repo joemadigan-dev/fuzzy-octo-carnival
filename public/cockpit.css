@@ -624,3 +624,19 @@ body {
   .ck-ld-bar-row { grid-template-columns: 42px minmax(24px, 1fr) 46px 62px; gap: 5px; font-size: 10.5px; }
   .ck-ld-head { flex-wrap: wrap; gap: 8px; }
 }
+
+/* The score's own track record. Deliberately not collapsed behind a
+   toggle: a caveat the reader has to click is a caveat the reader will
+   not read, and this one says the score does not predict returns. */
+.ck-ld-valid {
+  margin: 0 0 14px; padding: 9px 11px;
+  background: #16120c; border: 1px solid #4a3c1a; border-radius: 3px;
+}
+.ck-ld-valid-h {
+  margin: 0 0 5px; font-family: var(--font-label); font-size: 10.5px;
+  letter-spacing: .11em; color: var(--watch);
+}
+.ck-ld-valid p { margin: 0 0 5px; font-size: 11.5px; line-height: 1.6; color: var(--dim); }
+.ck-ld-valid p:last-child { margin-bottom: 0; }
+.ck-ld-valid .ck-ld-dim { color: var(--dimmer); }
+.ck-ld-untested { color: var(--stress) !important; }

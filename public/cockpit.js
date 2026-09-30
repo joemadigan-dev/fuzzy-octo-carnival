@@ -115,6 +115,17 @@
     $('ck-ld-veto').dataset.band = LD_VETO[ld.veto.state] || 'unknown';
     $('ck-ld-why').textContent = ld.regimeWhy;
 
+    // Track record, rendered next to the number rather than tucked away.
+    const val = ld.validation;
+    $('ck-ld-valid').innerHTML = val
+      ? `<p class="ck-ld-valid-h">HISTORICAL VALIDATION</p>
+         <p>${esc(val.headline)}</p>
+         <p>${esc(val.cause)}</p>
+         ${val.currentBandUntested
+            ? `<p class="ck-ld-untested">This reading is in the ${esc(ld.band)} band, which has never been observed in 25 years of history. ${esc(val.bandsNote)}</p>`
+            : `<p class="ck-ld-dim">${esc(val.bandsNote)} Highest reading ever reconstructed: ${val.observedMax}.</p>`}`
+      : '';
+
     // four mini-panels
     const v = ld.valuation, inf = ld.inflation, d20 = ld.decomposition[0] || {};
     const pctTxt = (p) => (p ? `${p.pct.toFixed(0)}th pct of ${(p.n / 252).toFixed(0)}y` : 'no history');

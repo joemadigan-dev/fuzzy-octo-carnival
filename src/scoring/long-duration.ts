@@ -672,6 +672,32 @@ export function decompose(m: Map<string, Point[]>, windowDays: number): Decompos
 
 // ── the module ────────────────────────────────────────────────────────
 
+/** What the backtest found, carried in the payload so the caveat travels
+ *  with the number rather than living only in a document nobody opens.
+ *
+ *  These are FACTS ABOUT THE SCORE'S TRACK RECORD, not live data, so they
+ *  are constants and are updated only when the backtest is re-run. The
+ *  script that produces them reads config/thresholds.json and never writes
+ *  it: no threshold has been tuned to improve what this block says.
+ *
+ *  It says the score does not predict returns and is mildly inverse to
+ *  them. That is an uncomfortable thing to render next to a 0-5 score and
+ *  it is exactly why it renders next to the 0-5 score. */
+export const VALIDATION = {
+  /** Highest reading in ~25 years of reconstructed history. */
+  observedMax: 3.6,
+  /** Bands never reached, so never tested. */
+  untestedBands: ['ATTRACTIVE', 'EXCEPTIONAL'] as const,
+  spearman: { full1y: -0.00, full2y: 0.05, reduced1y: -0.13, reduced2y: -0.13 },
+  headline: 'Backtested 2001-2024: this score did NOT predict long-duration returns and was mildly INVERSE to them (rank correlation -0.13 to +0.05). Its lowest band preceded the best average one-year returns (+3.5%) and its highest observed band the worst (-5.1%).',
+  cause: 'The three pillars are additive, so macro and inflation together reach 3.0 of 5 with the valuation pillar at zero — i.e. when long yields are at their most expensive. In April 2020 and October 2001 the score read 3.0 with valuation 0.00, after the rally rather than before it.',
+  bandsNote: 'ATTRACTIVE and EXCEPTIONAL have never been observed. Treat them as untested vocabulary.',
+} as const;
+
+/** True when the current reading sits in a band no history has tested. */
+export const bandIsUntested = (band: SetupBand): boolean =>
+  (VALIDATION.untestedBands as readonly string[]).includes(band);
+
 export interface LongDurationResult {
   score: Score;
   band: SetupBand;
@@ -691,6 +717,8 @@ export interface LongDurationResult {
   contradicting: string[];
   /** One deterministic sentence, built from the readings above it. */
   line: string;
+  /** The score's own track record, rendered beside it. */
+  validation: typeof VALIDATION & { currentBandUntested: boolean };
 }
 
 export function longDurationSetup(
@@ -746,6 +774,7 @@ export function longDurationSetup(
       decompose(m, T.decomposition.window_long),
     ],
     supporting, contradicting, line,
+    validation: { ...VALIDATION, currentBandUntested: bandIsUntested(band) },
   };
 }
 
