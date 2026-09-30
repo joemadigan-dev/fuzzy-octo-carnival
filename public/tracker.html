@@ -57,6 +57,52 @@
     <div class="ck-ai-why" id="ck-ai-why" hidden></div>
   </div>
 
+  <!-- LONG DURATION / TREASURY CONVEXITY — a separate analytical stream,
+       beneath the cockpit and NOT a sixth card. Reads the five cards'
+       outputs; feeds no composite score anywhere. Decision support only:
+       no order, no broker, no position instruction. -->
+  <section class="ck-panel ck-ld" aria-label="Long duration and Treasury convexity" id="ck-ld-panel" hidden>
+    <div class="ck-panel-head">
+      <h2>LONG DURATION / TREASURY CONVEXITY</h2>
+      <span class="ck-count" id="ck-ld-evidence"></span>
+    </div>
+
+    <div class="ck-ld-head">
+      <div class="ck-ld-score"><b id="ck-ld-score">—</b><span>/ 5</span></div>
+      <div class="ck-ld-band" id="ck-ld-band">—</div>
+    </div>
+    <dl class="ck-ld-states">
+      <div><dt>MACRO REGIME</dt><dd id="ck-ld-regime">—</dd></div>
+      <div><dt>MARKET CONFIRMATION</dt><dd id="ck-ld-confirm">—</dd></div>
+      <div><dt>STAGFLATION VETO</dt><dd id="ck-ld-veto">—</dd></div>
+    </dl>
+    <p class="ck-ld-why" id="ck-ld-why"></p>
+
+    <!-- four mini-panels, 2x2 collapsing to one column on a phone -->
+    <div class="ck-ld-grid" id="ck-ld-grid"></div>
+
+    <!-- supporting / contradicting, same convention as the AI panel -->
+    <div class="ck-ld-evid">
+      <div><h3>SUPPORTING</h3><ul id="ck-ld-supporting"></ul></div>
+      <div><h3>CONTRADICTING</h3><ul id="ck-ld-contradicting"></ul></div>
+    </div>
+
+    <h3 class="ck-ld-sub">WHAT IS DRIVING THE LONG-END?</h3>
+    <div id="ck-ld-decomp"></div>
+
+    <h3 class="ck-ld-sub">2056 STRIP — ILLUSTRATIVE PAYOFF</h3>
+    <p class="ck-ld-ref" id="ck-ld-ref"></p>
+    <div id="ck-ld-payoff"></div>
+
+    <h3 class="ck-ld-sub">2027 RECESSION MAP</h3>
+    <p class="ck-ld-ref">Recession itself is not the setup. Falling long discount rates are — three of these four involve a recession and they do not share a sign.</p>
+    <div class="ck-table-wrap"><table class="ck-table ck-ld-scen" id="ck-ld-scenarios"></table></div>
+
+    <h3 class="ck-ld-sub">SOURCES</h3>
+    <div class="ck-table-wrap"><table class="ck-table ck-ld-src" id="ck-ld-sources"></table></div>
+    <p class="ck-ld-note" id="ck-ld-note"></p>
+  </section>
+
   <!-- 2. WHAT CHANGED -->
   <section class="ck-panel" aria-label="What changed">
     <div class="ck-panel-head">

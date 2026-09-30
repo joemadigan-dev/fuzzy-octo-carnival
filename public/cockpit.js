@@ -62,9 +62,156 @@
     cardBust(); cardCredit(); cardLiquidity();
     renderHealth(); renderSetup(); renderChanged(); renderTargets(); renderMeltupDetail(); renderLadder();
     renderLiquidityDetail(); renderCommodities(); renderTimeline(); renderRatesChart();
-    renderAiCapital(); renderSignalHistory();
+    renderAiCapital(); renderLongDuration(); renderSignalHistory();
   }
 
+
+
+  // ── LONG DURATION / TREASURY CONVEXITY ───────────────────────────────
+  // A separate stream below the cockpit. Not a sixth card, and it feeds no
+  // composite. Two things this renderer must never do: display a price for
+  // the STRIP CUSIP, and present a score when the server said LOW DATA
+  // CONFIDENCE.
+  const LD_BAND = {
+    UNFAVOURABLE: 'green', WEAK: 'green', WATCH: 'amber',
+    'SETUP BUILDING': 'amber', ATTRACTIVE: 'red', EXCEPTIONAL: 'red',
+  };
+  const LD_VETO = { OFF: 'green', WATCH: 'amber', ACTIVE: 'red' };
+  const LD_CONF = { 'Not confirmed': 'green', Partial: 'amber', Confirmed: 'red' };
+  const bpTxt = (v) => (v === null || v === undefined ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(0)}bp`);
+  const pc2 = (v) => (v === null || v === undefined ? '—' : `${v.toFixed(2)}%`);
+  const usd = (v) => (v === null || v === undefined ? '—'
+    : `$${Math.round(v).toLocaleString('en-US')}`);
+
+  function ldRow(k, v, sub) {
+    return `<div class="ck-ld-r"><span class="ck-ld-k">${esc(k)}</span>
+      <span class="ck-ld-v">${esc(v)}</span>
+      ${sub ? `<span class="ck-ld-s">${esc(sub)}</span>` : ''}</div>`;
+  }
+
+  function renderLongDuration() {
+    const ld = ck.longDuration;
+    const panel = $('ck-ld-panel');
+    if (!ld) { panel.hidden = true; return; }
+    panel.hidden = false;
+
+    // LOW DATA CONFIDENCE suppresses the number itself, not just a caption.
+    if (ld.lowDataConfidence) {
+      $('ck-ld-score').textContent = '—';
+      $('ck-ld-band').textContent = 'LOW DATA CONFIDENCE';
+      $('ck-ld-band').dataset.band = 'unknown';
+    } else {
+      $('ck-ld-score').textContent = ld.score.score.toFixed(1);
+      $('ck-ld-band').textContent = ld.band;
+      $('ck-ld-band').dataset.band = LD_BAND[ld.band] || 'unknown';
+    }
+    $('ck-ld-evidence').textContent =
+      `EVIDENCE ${ld.score.evidenceAvailable}/${ld.score.evidenceTotal}`;
+
+    $('ck-ld-regime').textContent = ld.regime;
+    $('ck-ld-confirm').textContent = `${ld.confirmation.state} (${ld.confirmation.passed}/${ld.confirmation.total})`;
+    $('ck-ld-confirm').dataset.band = LD_CONF[ld.confirmation.state] || 'unknown';
+    $('ck-ld-veto').textContent = ld.veto.state;
+    $('ck-ld-veto').dataset.band = LD_VETO[ld.veto.state] || 'unknown';
+    $('ck-ld-why').textContent = ld.regimeWhy;
+
+    // four mini-panels
+    const v = ld.valuation, inf = ld.inflation, d20 = ld.decomposition[0] || {};
+    const pctTxt = (p) => (p ? `${p.pct.toFixed(0)}th pct of ${(p.n / 252).toFixed(0)}y` : 'no history');
+    $('ck-ld-grid').innerHTML = [
+      `<div class="ck-ld-mini"><h4>VALUATION</h4>
+        ${ldRow('30Y nominal', pc2(v.nominal ? v.nominal.value : null), pctTxt(v.nominal))}
+        ${ldRow('30Y real', pc2(v.real ? v.real.value : null), pctTxt(v.real))}
+        ${ldRow('Term premium (10Y)', pc2(v.termPremium ? v.termPremium.value : null), pctTxt(v.termPremium))}</div>`,
+      `<div class="ck-ld-mini"><h4>MACRO</h4>
+        ${ldRow('Bust Risk', `${n1(ck.bust.score)}/5`, ck.bust.level)}
+        ${ldRow('Credit Canary', `${n1(ck.credit.score)}/5`, ck.credit.stage)}
+        ${ldRow('Regime', ck.phase.phase, `inflation gate ${ld.inflationCompatibility}`)}</div>`,
+      `<div class="ck-ld-mini"><h4>INFLATION</h4>
+        ${ldRow('30Y breakeven', pc2(inf.breakeven), `3m ${bpTxt(inf.breakeven3mBp)}`)}
+        ${ldRow('Core CPI 3m ann.', inf.core3mAnn === null ? '—' : `${inf.core3mAnn.toFixed(1)}%`,
+                inf.core12mAnn === null ? '' : `12m ${inf.core12mAnn.toFixed(1)}%`)}
+        ${ldRow('Energy (WTI)', inf.oil === null ? '—' : `$${inf.oil.toFixed(0)}`, `3m ${pct(inf.oil3mPct, 0)}`)}</div>`,
+      `<div class="ck-ld-mini"><h4>SELL-OFF DRIVER</h4>
+        ${ldRow('30Y nominal 20d', bpTxt(d20.nominalBp), '')}
+        ${ldRow('of which real', bpTxt(d20.realBp), '')}
+        ${ldRow('of which breakeven', bpTxt(d20.breakevenBp), '')}
+        <p class="ck-ld-tag" data-tag="${esc(d20.tag || '')}">${esc(d20.tag || '—')}</p></div>`,
+    ].join('');
+
+    const li = (xs) => xs.length
+      ? xs.map((s) => `<li>${esc(s)}</li>`).join('')
+      : '<li class="ck-ld-none">None.</li>';
+    $('ck-ld-supporting').innerHTML = li(ld.supporting);
+    $('ck-ld-contradicting').innerHTML = li(ld.contradicting);
+
+    $('ck-ld-decomp').innerHTML = ld.decomposition.map((d) =>
+      `<div class="ck-ld-decomp-row">
+        <span class="ck-ld-win">${d.windowDays}d</span>
+        <span class="ck-ld-tag" data-tag="${esc(d.tag)}">${esc(d.tag)}</span>
+        <p>${esc(d.interpretation)}</p>
+      </div>`).join('');
+
+    renderLdPayoff(ld);
+    renderLdScenarios(ld);
+    renderLdSources(ld);
+    $('ck-ld-note').textContent =
+      'Decision support only. No order, broker or position instruction is produced anywhere in this module.';
+  }
+
+  function renderLdPayoff(ld) {
+    const sec = ld.security;
+    $('ck-ld-ref').textContent =
+      `${sec.label} ${sec.cusip} · maturity ${sec.maturity} · ${sec.coupon}% coupon · ${sec.pricingNote}`;
+    const p = ld.payoff;
+    if (!p) {
+      // No proxy yield means no table. Never a plausible-looking one.
+      $('ck-ld-payoff').innerHTML =
+        '<p class="ck-ld-none">No 30Y yield available, so no payoff is shown. A modelled table is not produced without its input.</p>';
+      return;
+    }
+    const worst = Math.max(...p.rows.map((r) => Math.abs(r.returnPct)));
+    const bars = p.rows.map((r) => {
+      const w = Math.max(2, (Math.abs(r.returnPct) / worst) * 100);
+      return `<div class="ck-ld-bar-row">
+        <span class="ck-ld-shift">${r.shiftBp > 0 ? '+' : ''}${r.shiftBp}bp</span>
+        <span class="ck-ld-track"><i class="${r.returnPct >= 0 ? 'pos' : 'neg'}"
+          style="width:${w.toFixed(1)}%"></i></span>
+        <span class="ck-ld-ret ${cls(r.returnPct)}">${pct(r.returnPct, 0)}</span>
+        <span class="ck-ld-val">${usd(r.valueEnd)}</span>
+      </div>`;
+    }).join('');
+    $('ck-ld-payoff').innerHTML =
+      `<p class="ck-ld-sub2">${usd(p.notional)} held one year · ${p.yearsToMaturity.toFixed(1)}y to maturity ·
+        modified duration ${p.modifiedDuration.toFixed(1)} · proxy ${pc2(p.proxyYield)} as of ${esc(p.proxyAsOf)}</p>
+       <div class="ck-ld-bars">${bars}</div>
+       <p class="ck-ld-caveat">${esc(p.caveat)}</p>`;
+  }
+
+  function renderLdScenarios(ld) {
+    $('ck-ld-scenarios').innerHTML =
+      `<thead><tr><th>SCENARIO</th><th>LONG YIELDS</th><th class="num">MODELLED</th><th class="num">$10,000 →</th><th>IMPLICATION</th></tr></thead>
+       <tbody>${ld.scenarios.map((s) => `<tr>
+         <td><b>${esc(s.label)}</b><span class="ck-ld-mech">${esc(s.mechanism)}</span></td>
+         <td>${esc(s.yieldPath)}<span class="ck-ld-mech">assumed ${s.shiftBp > 0 ? '+' : ''}${s.shiftBp}bp</span></td>
+         <td class="num ${cls(s.returnPct)}">${pct(s.returnPct, 0)}</td>
+         <td class="num">${usd(s.valueEnd)}</td>
+         <td>${esc(s.implication)}</td>
+       </tr>`).join('')}</tbody>`;
+  }
+
+  function renderLdSources(ld) {
+    $('ck-ld-sources').innerHTML =
+      `<thead><tr><th>SERIES</th><th>SOURCE</th><th>FREQ</th><th class="num">LATEST</th><th>AS OF</th><th class="num">AGE</th><th>STATUS</th></tr></thead>
+       <tbody>${ld.sources.map((s) => `<tr>
+         <td>${esc(s.label)}</td><td>${esc(s.source)}</td><td>${esc(s.freq)}</td>
+         <td class="num">${s.value === null ? 'UNKNOWN' : s.value.toFixed(2)}</td>
+         <td>${esc(s.asOf || '—')}</td>
+         <td class="num">${s.ageDays === null ? '—' : `${s.ageDays}d`}</td>
+         <td><span class="ck-ld-st" data-st="${esc(s.status)}">${esc(s.status.toUpperCase())}</span>
+           <span class="ck-ld-mech">limit ${s.staleAfterDays}d</span></td>
+       </tr>`).join('')}</tbody>`;
+  }
 
   // ── AI CAPITAL ───────────────────────────────────────────────────────
   // Two lines in the executive view, everything else in the panel far

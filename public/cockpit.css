@@ -507,3 +507,120 @@ body {
   color: var(--dimmer); margin-bottom: 4px;
 }
 .ck-hstale .ck-hrow span { color: var(--dimmer); }
+
+/* ══ LONG DURATION / TREASURY CONVEXITY ══════════════════════════════════
+   A panel, not a card. Everything here is inside one section so the
+   executive cockpit above it is untouched. Mobile first: the 2x2 mini-panel
+   grid collapses to a single column, and the payoff strip stays readable at
+   320px because it is a bar row rather than a wide table. */
+
+.ck-ld-head { display: flex; align-items: baseline; gap: 14px; margin: 4px 0 10px; }
+.ck-ld-score { font-family: var(--font-num); display: flex; align-items: baseline; gap: 4px; }
+.ck-ld-score b { font-size: 38px; line-height: 1; letter-spacing: -.02em; }
+.ck-ld-score span { font-size: 13px; color: var(--dimmer); }
+.ck-ld-band {
+  font-family: var(--font-label); font-size: 14px; letter-spacing: .09em;
+  padding: 3px 9px; border: 1px solid var(--rule); border-radius: 3px;
+}
+/* The bands read HIGH = a more attractive setup, which is the opposite
+   direction to every other score on this page, where high means stress.
+   That inversion is the reason this module is a separate stream, and the
+   colours follow the module's own meaning rather than the page's. */
+.ck-ld-band[data-band="green"]   { color: var(--neutral); border-color: var(--rule); }
+.ck-ld-band[data-band="amber"]   { color: var(--watch); border-color: #4a3c1a; }
+.ck-ld-band[data-band="red"]     { color: var(--ok); border-color: #1d4a36; }
+.ck-ld-band[data-band="unknown"] { color: var(--dimmer); font-style: italic; }
+
+.ck-ld-states {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin: 0 0 8px; padding: 9px 0; border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.ck-ld-states dt {
+  font-family: var(--font-label); font-size: 10px; letter-spacing: .1em; color: var(--dimmer);
+}
+.ck-ld-states dd {
+  margin: 3px 0 0; font-family: var(--font-num); font-size: 12.5px; color: var(--ink);
+}
+.ck-ld-states dd[data-band="green"] { color: var(--ok); }
+.ck-ld-states dd[data-band="amber"] { color: var(--watch); }
+.ck-ld-states dd[data-band="red"]   { color: var(--stress); }
+.ck-ld-why { margin: 0 0 14px; color: var(--dim); font-size: 12.5px; line-height: 1.6; }
+
+.ck-ld-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.ck-ld-mini { background: var(--panel-hi); border: 1px solid var(--rule); border-radius: 3px; padding: 10px 11px; }
+.ck-ld-mini h4 {
+  margin: 0 0 7px; font-family: var(--font-label); font-size: 10.5px;
+  letter-spacing: .11em; color: var(--dim);
+}
+.ck-ld-r { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 3px 0; }
+.ck-ld-k { font-size: 11.5px; color: var(--dim); }
+.ck-ld-v { font-family: var(--font-num); font-size: 12.5px; text-align: right; }
+.ck-ld-s { grid-column: 1 / -1; font-family: var(--font-num); font-size: 10px; color: var(--dimmer); }
+.ck-ld-tag {
+  margin: 7px 0 0; font-family: var(--font-label); font-size: 11px; letter-spacing: .07em;
+  color: var(--dim);
+}
+.ck-ld-tag[data-tag*="Inflation-led"]  { color: var(--stress); }
+.ck-ld-tag[data-tag*="Real-yield"]     { color: var(--watch); }
+.ck-ld-tag[data-tag*="Growth-scare"]   { color: var(--ok); }
+.ck-ld-tag[data-tag*="Disinflation"]   { color: var(--ok); }
+
+.ck-ld-evid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 4px; }
+.ck-ld-evid h3, .ck-ld-sub {
+  font-family: var(--font-label); font-size: 11px; letter-spacing: .11em;
+  color: var(--dim); margin: 12px 0 6px;
+}
+.ck-ld-evid ul { margin: 0; padding-left: 16px; }
+.ck-ld-evid li { font-size: 12px; line-height: 1.55; color: var(--dim); margin-bottom: 5px; }
+.ck-ld-none { color: var(--dimmer); font-style: italic; list-style: none; margin-left: -16px; }
+
+.ck-ld-decomp-row { padding: 7px 0; border-top: 1px solid var(--rule); }
+.ck-ld-decomp-row:first-child { border-top: 0; }
+.ck-ld-win {
+  font-family: var(--font-num); font-size: 11px; color: var(--dimmer);
+  margin-right: 9px;
+}
+.ck-ld-decomp-row .ck-ld-tag { display: inline; margin: 0; }
+.ck-ld-decomp-row p { margin: 4px 0 0; font-size: 12px; line-height: 1.55; color: var(--dim); }
+
+.ck-ld-ref, .ck-ld-caveat, .ck-ld-note, .ck-ld-sub2 {
+  font-size: 11.5px; line-height: 1.55; color: var(--dimmer); margin: 0 0 8px;
+}
+.ck-ld-caveat { font-style: italic; margin-top: 8px; }
+.ck-ld-note { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--rule); }
+
+/* Payoff strip. A bar row, not a table, so it survives a phone. */
+.ck-ld-bars { display: grid; gap: 3px; }
+.ck-ld-bar-row {
+  display: grid; grid-template-columns: 52px 1fr 60px 76px; align-items: center; gap: 8px;
+  font-family: var(--font-num); font-size: 12px;
+}
+.ck-ld-shift { color: var(--dim); }
+.ck-ld-track { background: #101316; border: 1px solid var(--rule); border-radius: 2px; height: 13px; position: relative; }
+.ck-ld-track i { display: block; height: 100%; border-radius: 1px; }
+.ck-ld-track i.pos { background: var(--ok); }
+.ck-ld-track i.neg { background: var(--stress); }
+.ck-ld-ret { text-align: right; }
+.ck-ld-val { text-align: right; color: var(--dim); }
+
+.ck-ld-mech { display: block; font-size: 10.5px; line-height: 1.5; color: var(--dimmer); margin-top: 3px; }
+.ck-ld-scen td { vertical-align: top; }
+.ck-ld-st { font-family: var(--font-label); font-size: 10.5px; letter-spacing: .08em; }
+.ck-ld-st[data-st="ok"]      { color: var(--ok); }
+.ck-ld-st[data-st="stale"]   { color: var(--watch); }
+.ck-ld-st[data-st="missing"] { color: var(--stress); }
+
+@media (max-width: 720px) {
+  .ck-ld-grid, .ck-ld-evid { grid-template-columns: 1fr; }
+  .ck-ld-states { grid-template-columns: 1fr; gap: 7px; }
+  .ck-ld-score b { font-size: 32px; }
+  #ck-ld-panel { scroll-margin-top: 84px; }
+}
+@media (max-width: 420px) {
+  /* Both columns the brief asks for stay visible. The bar track gives up
+     width instead — it is the decorative element, the dollar figure is the
+     one a reader came for. */
+  .ck-ld-bar-row { grid-template-columns: 42px minmax(24px, 1fr) 46px 62px; gap: 5px; font-size: 10.5px; }
+  .ck-ld-head { flex-wrap: wrap; gap: 8px; }
+}

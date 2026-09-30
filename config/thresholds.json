@@ -4,10 +4,9 @@
     "hard-code a number that belongs here.",
     "",
     "Scores are 0-5 and are built by ADDING named components, each worth at",
-    "most 1. A component with no data contributes 0 and says so — a missing",
+    "most 1. A component with no data contributes 0 and says so \u2014 a missing",
     "feed must never read as a benign reading, and must never invent a signal."
   ],
-
   "meltup": {
     "_comment": "Section 6. Six-month return is the spine; acceleration matters more than level.",
     "ret6m_notable": 10,
@@ -21,12 +20,13 @@
     "vix_complacent": 16,
     "breadth_divergence_pct": -3
   },
-
   "bust": {
     "_comment": "Section 7. Five categories, each contributing at most 1.",
     "valuation": {
-      "cape_elevated": 25, "cape_extreme": 35,
-      "mcap_gdp_elevated": 120, "mcap_gdp_extreme": 160,
+      "cape_elevated": 25,
+      "cape_extreme": 35,
+      "mcap_gdp_elevated": 120,
+      "mcap_gdp_extreme": 160,
       "erp_thin_pct": 3.5
     },
     "leverage": {
@@ -47,7 +47,6 @@
       "breadth_deteriorating_pct": -3
     }
   },
-
   "credit": {
     "_comment": [
       "Section 8. Stage 0-5. Rate-of-change matters as much as level: a move",
@@ -68,7 +67,6 @@
     "ig_stress_pct": 1.5,
     "ladder_widening_bp": 75
   },
-
   "rates": {
     "_comment": "Section 11. Both directions: rising rates as trigger, collapsing rates as bust confirmation.",
     "us10y_watch": 4.5,
@@ -77,7 +75,6 @@
     "collapse_60d_bp": -75,
     "real_impulse_bp": 75
   },
-
   "liquidity": {
     "_comment": "Section 12. Distinguish routine balance-sheet drift from emergency expansion.",
     "walcl_qe_4w_bn": 250,
@@ -86,18 +83,16 @@
     "walcl_extraordinary_bn": 5000,
     "walcl_qt_13w_bn": -250
   },
-
   "commodities": {
     "_comment": "Section 13. Supercycle confirmation needs several signals, not one new high.",
     "outperformance_6m_pct": 10,
     "breadth_min_confirming": 3
   },
-
   "phase": {
     "_comment": [
       "Section 4. A phase must not flip on one day's move. `persistDays` is the",
       "number of consecutive sessions a candidate phase must hold before it is",
-      "adopted — the same hysteresis the Barometer uses on its regimes."
+      "adopted \u2014 the same hysteresis the Barometer uses on its regimes."
     ],
     "persistDays": 3,
     "parabolic_ret6m": 22,
@@ -107,13 +102,12 @@
     "qe_walcl_13w_bn": 500,
     "supercycle_outperformance_pct": 15
   },
-
   "ai_capital": {
     "_comment": [
       "V2. The AI Capital Stress Score: five components, each worth at most 1.",
       "",
       "THESE NUMBERS MUST BE FALSIFIABLE. The score is not built to confirm",
-      "that an AI capital bubble exists — it is built so that the Noble/Chanos",
+      "that an AI capital bubble exists \u2014 it is built so that the Noble/Chanos",
       "thesis can be shown to be WRONG by the same data that could show it to",
       "be right. So every component has a `contradicts` level as well as a",
       "stress level, and a company comfortably inside the contradicting level",
@@ -121,23 +115,20 @@
       "",
       "Levels are fractions unless named otherwise: 0.35 means 35%."
     ],
-
     "intensity": {
       "_comment": "Capex as a share of revenue, and how fast it is growing relative to revenue. A build-out growing far faster than the revenue it serves is the precondition for the thesis, not proof of it.",
       "capex_to_revenue_elevated": 0.25,
-      "capex_to_revenue_extreme": 0.40,
+      "capex_to_revenue_extreme": 0.4,
       "capex_growth_gap_elevated": 0.25,
-      "capex_growth_gap_extreme": 0.60,
+      "capex_growth_gap_extreme": 0.6,
       "capex_to_revenue_contradicts": 0.15
     },
-
     "funding": {
       "_comment": "Capex against the operating cash flow available to pay for it. Above 1 the programme is larger than the cash the business generates and is being financed from somewhere else.",
-      "capex_to_ocf_elevated": 0.80,
-      "capex_to_ocf_extreme": 1.00,
-      "capex_to_ocf_contradicts": 0.50
+      "capex_to_ocf_elevated": 0.8,
+      "capex_to_ocf_extreme": 1.0,
+      "capex_to_ocf_contradicts": 0.5
     },
-
     "returns": {
       "_comment": [
         "The core of the thesis. Incremental operating income per additional",
@@ -146,12 +137,11 @@
         "Benchmarked against a mid-teens cost of capital rather than zero:",
         "capital earning 4% is destroying value even though 4% is positive."
       ],
-      "incr_return_thin": 0.10,
+      "incr_return_thin": 0.1,
       "incr_return_negative": 0.0,
-      "incr_return_contradicts": 0.20,
+      "incr_return_contradicts": 0.2,
       "incr_fcf_negative": 0.0
     },
-
     "financing": {
       "_comment": "Whether the build-out is shifting from surplus cash onto borrowed money. This is the component that connects the capital cycle to credit at all.",
       "net_debt_to_ocf_elevated": 1.5,
@@ -159,7 +149,6 @@
       "net_debt_to_ocf_contradicts": 0.5,
       "net_debt_rise_elevated_bn": 25
     },
-
     "divergence": {
       "_comment": [
         "Supplier against buyers. Nvidia's revenue is partly the mirror image",
@@ -168,11 +157,10 @@
         "booking growth while the buyers' spending decelerates is the classic",
         "shape of a cycle turning, and is what would show up first."
       ],
-      "divergence_gap_elevated": 0.30,
-      "divergence_gap_extreme": 0.60,
+      "divergence_gap_elevated": 0.3,
+      "divergence_gap_extreme": 0.6,
       "aligned_contradicts": 0.15
     },
-
     "status": {
       "_comment": "The one-line AI CAPITAL status under Market Setup. Score bands, 0-5.",
       "watch": 1.5,
@@ -180,7 +168,6 @@
       "stress": 3.5
     }
   },
-
   "ai_transmission": {
     "_comment": [
       "V2 section 10. The chain AI CAPITAL -> AI CREDIT -> CCC -> BB/B -> HY -> IG,",
@@ -198,23 +185,42 @@
       "over the stated window (0.5 = 50bp)."
     ],
     "ai_credit": {
-      "_comment": "Not a market spread — the deployers' own borrowing, from their filings. Net debt against operating cash flow, and how fast borrowings are growing.",
+      "_comment": "Not a market spread \u2014 the deployers' own borrowing, from their filings. Net debt against operating cash flow, and how fast borrowings are growing.",
       "net_debt_ocf_amber": 1.0,
       "net_debt_ocf_red": 2.0,
       "debt_growth_amber": 0.25,
-      "debt_growth_red": 0.60
+      "debt_growth_red": 0.6
     },
-    "ccc": { "level_amber": 9.0, "level_red": 11.0, "widen_60d_amber": 0.75, "widen_60d_red": 1.50 },
-    "bb":  { "level_amber": 3.0, "level_red": 4.0,  "widen_60d_amber": 0.40, "widen_60d_red": 0.80 },
-    "hy":  { "level_amber": 4.5, "level_red": 6.0,  "widen_60d_amber": 0.50, "widen_60d_red": 1.00 },
-    "ig":  { "level_amber": 1.3, "level_red": 1.8,  "widen_60d_amber": 0.20, "widen_60d_red": 0.40 },
+    "ccc": {
+      "level_amber": 9.0,
+      "level_red": 11.0,
+      "widen_60d_amber": 0.75,
+      "widen_60d_red": 1.5
+    },
+    "bb": {
+      "level_amber": 3.0,
+      "level_red": 4.0,
+      "widen_60d_amber": 0.4,
+      "widen_60d_red": 0.8
+    },
+    "hy": {
+      "level_amber": 4.5,
+      "level_red": 6.0,
+      "widen_60d_amber": 0.5,
+      "widen_60d_red": 1.0
+    },
+    "ig": {
+      "level_amber": 1.3,
+      "level_red": 1.8,
+      "widen_60d_amber": 0.2,
+      "widen_60d_red": 0.4
+    },
     "confirmation": {
-      "_comment": "How many CREDIT nodes (ai_credit excluded — it is the issuers, not the market) must be RED before transmission is called confirmed, and AMBER before it is called forming.",
+      "_comment": "How many CREDIT nodes (ai_credit excluded \u2014 it is the issuers, not the market) must be RED before transmission is called confirmed, and AMBER before it is called forming.",
       "forming_min_amber": 2,
       "confirmed_min_red": 2
     }
   },
-
   "ai_supplier": {
     "_comment": [
       "V2 section 9. Nvidia's revenue growth against the deployers' aggregate",
@@ -222,10 +228,9 @@
       "signal is the gap. Fractions, so 0.30 = 30 percentage points."
     ],
     "aligned_within": 0.15,
-    "lagging_gap": 0.30,
-    "divergence_gap": 0.30
+    "lagging_gap": 0.3,
+    "divergence_gap": 0.3
   },
-
   "hunter_ai": {
     "_comment": [
       "V2 section 11. Hunter x AI Capital interpretation matrix.",
@@ -240,19 +245,17 @@
     "confirmed_credit_score": 3.0,
     "confirmed_bust_onset": 2.0
   },
-
   "ai_whatchanged": {
     "_comment": [
       "V2 section 14. A quarterly fundamental only counts as a change when the",
-      "MODEL moves — a new filing that leaves every reading where it was is",
+      "MODEL moves \u2014 a new filing that leaves every reading where it was is",
       "not news, and must not generate a daily entry."
     ],
     "score_move": 0.5,
     "capex_ocf_cross": 1.0,
     "net_debt_ocf_cross": 1.5,
-    "incr_return_cross": 0.10
+    "incr_return_cross": 0.1
   },
-
   "alerts": {
     "_comment": "Section 17. The alerts table PK (date, kind, key) is the dedup mechanism.",
     "target_within_pct": 10,
@@ -263,5 +266,152 @@
     "vix_level": 30,
     "drawdown_pct": -20,
     "walcl_4w_bn": 500
+  },
+  "long_duration": {
+    "_comment": [
+      "LONG DURATION / TREASURY CONVEXITY. Decision support for a concentrated",
+      "long-duration Treasury position (reference: 2056 principal STRIP).",
+      "Informed by the Michael Green thesis of 2026-09-29.",
+      "",
+      "THE ONE THING THIS MUST NOT ENCODE is 'recession = buy bonds'. A",
+      "recession only helps a 29-year zero if it pulls the LONG REAL yield or",
+      "the term premium down. A stagflationary or fiscal-stress recession",
+      "leaves long yields where they are or pushes them higher, and the holder",
+      "loses badly because duration cuts both ways. That distinction is",
+      "structural here, not editorial: the macro pillar is MULTIPLIED by an",
+      "inflation-compatibility factor, so growth deterioration alongside",
+      "accelerating inflation contributes nothing at all rather than",
+      "contributing a little.",
+      "",
+      "BANDS ARE PERCENTILES OF EACH SERIES' OWN HISTORY wherever the history",
+      "supports it, per the brief, rather than absolute yield levels that",
+      "would silently encode a view about the right level of rates. The two",
+      "exceptions are documented at the fields that use them.",
+      "",
+      "HISTORY LIMITS, which bound what the percentiles mean:",
+      "  DGS30        1980-       46y  (continuous, incl. the 2002-06 suspension)",
+      "  THREEFYTP10  1990-       36y",
+      "  DFII30       2010-02-22- 16y  <- 30Y TIPS were not issued 2001-2010",
+      "  DLTIIT       2000-       26y  backtest only, 10y+ AVERAGE maturity",
+      "A 96th percentile on DFII30 is a 96th percentile of sixteen years. The",
+      "UI says so; do not quietly upgrade it to 'since 1980'."
+    ],
+    "weights": {
+      "_comment": "Pillar caps, summing to 5.0. 40/35/25 per the brief.",
+      "valuation": 2.0,
+      "macro": 1.75,
+      "inflation": 1.25
+    },
+    "valuation": {
+      "_comment": "Percentile bands. Higher yield = cheaper duration = higher score.",
+      "real_pct_exceptional": 90,
+      "real_pct_attractive": 75,
+      "real_pct_fair": 50,
+      "real_pct_poor": 25,
+      "real_cap": 0.8,
+      "nominal_cap": 0.7,
+      "tp_pct_high": 80,
+      "tp_pct_moderate": 60,
+      "tp_cap": 0.5,
+      "tp_rising_z": 1.5,
+      "tp_rising_cap": 0.2
+    },
+    "macro": {
+      "_comment": [
+        "Consumes the existing cards' OUTPUTS. No recession model is rebuilt",
+        "here and no new growth series is fetched."
+      ],
+      "bust_strong": 3.5,
+      "bust_moderate": 2.5,
+      "bust_early": 1.5,
+      "bust_cap": 0.6,
+      "credit_strong": 2.5,
+      "credit_moderate": 1.5,
+      "credit_cap": 0.5,
+      "regime_cap": 0.35,
+      "rates_cap": 0.3,
+      "us2y_rollover_bp": -20
+    },
+    "inflation": {
+      "_comment": [
+        "The veto layer. Answers one question: could the Fed and the long end",
+        "plausibly respond to weaker growth with lower rates?",
+        "",
+        "core_hot_pct is an ABSOLUTE 3% annualised rather than a percentile.",
+        "Core CPI's own distribution since 1980 includes the disinflation of",
+        "the early eighties, so its percentiles are dominated by a regime that",
+        "will not recur; 3% is the level at which the long end stops being able",
+        "to rally on growth weakness, which is the actual question."
+      ],
+      "be_falling_bp": -10,
+      "be_rising_bp": 20,
+      "be_cap": 0.5,
+      "core_cap": 0.45,
+      "core_hot_pct": 3.0,
+      "energy_falling_pct": 0,
+      "energy_shock_pct": 25,
+      "energy_cap": 0.3,
+      "compat_full": 0.9,
+      "compat_partial": 0.45
+    },
+    "veto": {
+      "_comment": [
+        "STAGFLATION VETO. Counts conditions; 0 OFF, 1 WATCH, 2+ ACTIVE.",
+        "ACTIVE caps the total at the WATCH band. WATCH caps it below 4.5 so a",
+        "recession signal alone can never read EXCEPTIONAL, which is the",
+        "specific outcome the brief forbids."
+      ],
+      "be_3m_bp": 25,
+      "be_pct": 75,
+      "core_3m_ann_pct": 3.0,
+      "energy_3m_pct": 25,
+      "real30_3m_bp": 40,
+      "watch_at": 1,
+      "active_at": 2,
+      "cap_watch": 4.4,
+      "cap_active": 2.5
+    },
+    "confirmation": {
+      "_comment": [
+        "SETUP vs CONFIRMATION, kept apart on purpose. A 5.0 setup that is NOT",
+        "CONFIRMED means yields look historically cheap and are still rising.",
+        "Five tests; 0-1 Not confirmed, 2-3 Partial, 4-5 Confirmed."
+      ],
+      "ma_short_days": 20,
+      "ma_long_days": 60,
+      "real_rollover_bp": 0,
+      "us2y_rollover_bp": 0,
+      "partial_at": 2,
+      "confirmed_at": 4
+    },
+    "decomposition": {
+      "_comment": [
+        "WHAT IS DRIVING THE LONG-END? Splits the 30Y nominal move into its",
+        "real and breakeven legs over 20 and 60 trading days.",
+        "",
+        "We CANNOT observe Green's passive-flow mechanism in yield data, so the",
+        "vocabulary stops at what the decomposition actually supports:",
+        "'Consistent with a non-inflation / term-premium driven sell-off'.",
+        "Never 'passive selling' or 'mechanical selling' from these inputs."
+      ],
+      "quiet_bp": 10,
+      "dominant_share": 0.7,
+      "minor_share": 0.3,
+      "window_short": 20,
+      "window_long": 60
+    },
+    "bands": {
+      "_comment": "Brief section 1. Vocabulary only \u2014 no BUY/SELL anywhere.",
+      "unfavourable": 1.0,
+      "weak": 2.0,
+      "watch": 3.0,
+      "building": 4.0,
+      "attractive": 4.5,
+      "exceptional": 5.0
+    },
+    "confidence": {
+      "_comment": "Below low_coverage the score is withheld as LOW DATA CONFIDENCE rather than presented as complete.",
+      "low_coverage": 0.6
+    }
   }
 }

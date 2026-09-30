@@ -137,6 +137,7 @@ export const CLUSTERS: ClusterDef[] = [
     attribution: 'DATA: ASWATH DAMODARAN, NYU STERN · MONTHLY' },
   { id: 'thesis', label: 'THESIS TRACKERS — HUNTER TARGETS',
     attribution: 'TRACKING DAVID HUNTER FORECASTS · NOT MARKET DATA' },
+  { id: 'long_duration', label: 'LONG DURATION — 30Y NOMINAL · REAL · BREAKEVEN' },
 ];
 
 /** Dated forecasts with stated horizons, for the thesis-decay tile.
@@ -247,6 +248,100 @@ export const KPIS: KpiDef[] = [
     ],
     stateBandsCaveat: 'The 50/75bp levels are the published claim, not a validated one — the parameter sweep finds the median 3-month S&P return after a 75bp crossing is POSITIVE across 18 crossings. This alert marks a level being reached, not a forecast.',
     refLine: { value: 75, label: '75bp' },
+  },
+
+  // ═══ LONG DURATION ════════════════════════════════════════════════════
+  // The 30-year end, kept as its own cluster because the question it
+  // answers is different from every other cluster's: not "what is the
+  // system doing" but "what is being priced into the longest discount
+  // rate there is". Feeds src/scoring/long-duration.ts.
+  //
+  // NONE of these carries a `subIndex`. That is deliberate twice over.
+  // The brief keeps this stream out of every existing composite, and the
+  // barometer's leave-one-out stage costs one full re-derivation per
+  // input — it is the stage that has exceeded the CPU limit before, and
+  // it is not getting five more passes for a module that must not
+  // influence it anyway.
+  {
+    id: 'us30y', label: '30Y TREASURY', cluster: 'long_duration',
+    unit: '%', decimals: 2, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'The long end IS the discount rate for everything with a distant cash flow. Rising 30Y nominal tightens every duration-sensitive valuation at once.',
+    source: 'fred', seriesId: 'DGS30',
+  },
+  {
+    // The single most important input to the module. Note the history:
+    // DFII30 begins 2010-02-22 because 30-year TIPS were not issued
+    // between 2001 and 2010. Percentiles computed on it are percentiles
+    // of a ~16-year sample and are labelled as such — they are NOT
+    // "since 1980", and a 96th percentile on 16 years is a weaker claim
+    // than the same number on 46.
+    id: 'us30y_real', label: '30Y REAL YIELD', cluster: 'long_duration',
+    unit: '%', decimals: 2, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'A high long real yield is simultaneously the tightest financial condition and the most attractive entry for a long-duration holder. The module reads it as valuation; the barometer would read it as stress. Both are true, which is why this is a separate stream.',
+    source: 'fred', seriesId: 'DFII30',
+  },
+  {
+    // Deep-history extension for the backtest ONLY. TIPS 10+ year
+    // average yield, available from 2000, so it covers 2001, 2008 and
+    // 2020 — which DFII30 cannot. It is NOT a 30-year yield: the
+    // maturity is an average and it drifts. Hidden, never tiled, and the
+    // backtest reports results from it separately rather than splicing
+    // the two series into one line that would imply a continuity that
+    // does not exist.
+    id: 'us30y_real_long', label: 'TIPS 10Y+ REAL (DEEP HISTORY)', cluster: 'long_duration',
+    unit: '%', decimals: 2, refresh: 'daily', hidden: true,
+    source: 'fred', seriesId: 'DLTIIT',
+  },
+  {
+    // NOT the ACM term premium. ACM is published by the New York Fed and
+    // is not on FRED — ACMTP10 does not exist there, and no term premium
+    // existed anywhere in this codebase before now, so nothing is being
+    // duplicated. This is the Federal Reserve Board's own 10-year
+    // estimate, from a different model and at a shorter maturity than
+    // the security this module is about. The label says 10Y on screen
+    // for exactly that reason.
+    id: 'term_premium', label: '10Y TERM PREMIUM (FRB)', cluster: 'long_duration',
+    unit: '%', decimals: 2, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'Compensation demanded for holding duration, over and above expected short rates. High AND STABLE is cheap duration; high AND RISING FAST is a market losing confidence in the long end — the module scores those differently rather than reading the level alone.',
+    source: 'fred', seriesId: 'THREEFYTP10',
+  },
+  {
+    // Monthly by nature. The 45-day default from defaultStaleDays() is
+    // correct for it and it must NOT be read as stale for the crime of
+    // being monthly — that distinction is already handled in the
+    // registry rather than here.
+    id: 'core_cpi', label: 'CORE CPI (INDEX)', cluster: 'long_duration',
+    unit: '', decimals: 1, refresh: 'daily', freq: 'monthly', hidden: true,
+    source: 'fred', seriesId: 'CPILFESL',
+  },
+  {
+    // 30Y breakeven inflation. FRED publishes no DAILY 30-year
+    // breakeven — T30YIEM is monthly — so it is derived from the two
+    // daily legs. Cross-checked on 2026-09-30: derived 2.28% against
+    // T30YIEM's official 2.25% for the latest common month.
+    //
+    // ffillDays is 5, not more: a breakeven stitched from a stale leg
+    // would move when only one side had updated, inventing a change in
+    // inflation expectations out of a publication delay.
+    id: 'be30', label: '30Y BREAKEVEN', cluster: 'long_duration',
+    unit: '%', decimals: 2, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'Market-implied average inflation over thirty years. Rising breakevens are what makes a growth slowdown UNHELPFUL for long duration — the veto layer in one number.',
+    derive: { type: 'combo', terms: [{ id: 'us30y', coef: 1 }, { id: 'us30y_real', coef: -1 }], ffillDays: 5 },
+  },
+  {
+    // Curvature of the module's own valuation case: how far the long
+    // real yield has travelled from its 18-month trough. Same shape as
+    // real_yield_impulse on the 10Y, and carried for the same reason —
+    // a level reached slowly is a different fact from one reached fast.
+    id: 'real30_impulse', label: '30Y REAL IMPULSE', cluster: 'long_duration',
+    unit: 'bp', decimals: 0, showPct: false, refresh: 'daily',
+    stressSign: 1,
+    signRationale: 'Rise in the 30Y real yield from its own 18-month trough. Long real yields still climbing hard is the single strongest argument against a long-duration entry, however cheap the level looks.',
+    derive: { type: 'trough_impulse', input: 'us30y_real', months: 18, scale: 100 },
   },
 
   // ═══ CREDIT STRESS ════════════════════════════════════════════════════

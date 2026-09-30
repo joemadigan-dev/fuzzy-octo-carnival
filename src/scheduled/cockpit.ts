@@ -10,6 +10,7 @@ import type { Phase } from '../scoring/phase.ts';
 import type { Snapshot } from '../scoring/whatchanged.ts';
 import { buildAiCapital, saveAiCapital, type AiCapitalView } from './ai-capital-view.ts';
 import { aiCapitalChanges } from '../scoring/aichanged.ts';
+import { buildLongDuration, saveLongDuration, type LongDurationView } from './long-duration-view.ts';
 import type { Env } from './index.ts';
 
 /** How much snapshot history "What Changed?" needs — a month plus slack. */
@@ -92,6 +93,28 @@ export async function runCockpit(
     }
   }
 
+  // ── LONG DURATION / TREASURY CONVEXITY ───────────────────────────────
+  // A separate analytical stream. It CONSUMES the five cards' outputs and
+  // feeds none of them — nothing below this point reads `ld`, and no
+  // composite score anywhere includes it. Its own try for the same reason
+  // the AI block has one: the newest module must not be able to take down
+  // what was working before it existed.
+  let ld: LongDurationView | null = null;
+  try {
+    ld = buildLongDuration(seriesMap, nowIso, {
+      phase: c.phase, bust: c.bust, credit: c.credit, liquidity: c.liquidity,
+    });
+    await saveLongDuration(env, ld, today);
+    log.push(
+      `long duration: ${ld.lowDataConfidence ? 'LOW DATA CONFIDENCE' : `${ld.score.score}/5 ${ld.band}`}`
+      + ` · regime ${ld.regime} · confirmation ${ld.confirmation.state} (${ld.confirmation.passed}/${ld.confirmation.total})`
+      + ` · veto ${ld.veto.state} · inflation gate ${ld.inflationCompatibility}`
+      + ` · ${ld.decomposition[0].tag} (20d)`,
+    );
+  } catch (e) {
+    log.push(`long duration: FAILED — ${e}`);
+  }
+
   const health = systemHealth({
     nowIso,
     lastRun: opts.lastRun,
@@ -118,7 +141,7 @@ export async function runCockpit(
         .sort((a, b) => b.weight - a.weight).slice(0, 8);
     }
   }
-  const payload = { ...c, health, aiCapital: ai };
+  const payload = { ...c, health, aiCapital: ai, longDuration: ld };
 
   await env.DB.prepare(
     `INSERT INTO cockpit_history
