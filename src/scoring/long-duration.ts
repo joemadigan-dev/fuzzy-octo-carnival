@@ -685,13 +685,13 @@ export function decompose(m: Map<string, Point[]>, windowDays: number): Decompos
  *  it is exactly why it renders next to the 0-5 score. */
 export const VALIDATION = {
   /** Highest reading in ~25 years of reconstructed history. */
-  observedMax: 3.6,
+  observedMax: 3.8,
   /** Bands never reached, so never tested. */
   untestedBands: ['ATTRACTIVE', 'EXCEPTIONAL'] as const,
-  spearman: { full1y: -0.00, full2y: 0.05, reduced1y: -0.13, reduced2y: -0.13 },
-  headline: 'Backtested 2001-2024: this score did NOT predict long-duration returns and was mildly INVERSE to them (rank correlation -0.13 to +0.05). Its lowest band preceded the best average one-year returns (+3.5%) and its highest observed band the worst (-5.1%).',
-  cause: 'The three pillars are additive, so macro and inflation together reach 3.0 of 5 with the valuation pillar at zero — i.e. when long yields are at their most expensive. In April 2020 and October 2001 the score read 3.0 with valuation 0.00, after the rally rather than before it.',
-  bandsNote: 'ATTRACTIVE and EXCEPTIONAL have never been observed. Treat them as untested vocabulary.',
+  spearman: { full1y: 0.01, full2y: 0.05, reduced1y: -0.07, reduced2y: -0.07 },
+  headline: 'Backtested 2001-2024 on production-matched percentile windows: this score did NOT predict long-duration returns (rank correlation -0.07 to +0.05). Its lowest band preceded the best average one-year returns (+3.6%) and its middle bands the worst (-5.7%).',
+  cause: 'Two reasons it cannot reach its top bands. The pillars are additive, so macro and inflation alone reach 3.0 of 5 with valuation at zero — in April 2020 the score read 3.0 with valuation 0.00, after the rally. And the veto condition "long real yields still rising" is almost always true exactly when the valuation percentile is highest, because a high real yield is usually reached BY rising: that collision is live right now at valuation 2.00 of 2.00 with the veto ACTIVE.',
+  bandsNote: 'ATTRACTIVE and EXCEPTIONAL have never been observed in 25 years. Treat them as untested vocabulary.',
 } as const;
 
 /** True when the current reading sits in a band no history has tested. */

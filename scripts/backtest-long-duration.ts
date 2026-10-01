@@ -305,11 +305,27 @@ const EPISODES: { label: string; from: string; to: string }[] = [
 ];
 
 async function main() {
-  console.log('Fetching FRED history…');
+  // MATCH PRODUCTION'S STORED WINDOW. The first version of this script
+  // fetched DGS30 from 1980 and the term premium from 1990, while the live
+  // system stores from BACKFILL_START = 2000-01-01 and computes its
+  // percentiles on that. The mismatch was not cosmetic: measured against a
+  // distribution containing the 10%+ yields of the early eighties, a 5.59%
+  // 30Y ranks around the 20th percentile and the valuation pillar scored
+  // 0.09 of its 0.70 cap. Measured against 2000+, as production actually
+  // does, the same yield is at the 94th percentile and the pillar scores
+  // its full 0.70. Production reached 2.00 of 2.00 on 2026-10-01 while
+  // this script had concluded the pillar was nearly unreachable.
+  //
+  // So the harness was testing a weaker instrument than the one that
+  // shipped, and every score it produced was too macro-driven. Matching
+  // the window is a correction to the TEST, not a tuning of the system —
+  // no threshold in config/thresholds.json is touched by it.
+  const PROD_START = '2000-01-01';
+  console.log(`Fetching FRED history (percentile windows start ${PROD_START}, matching production)…`);
   const [dgs30, dfii30, dltiit, tp, core, wti, dgs2, dgs10, unrate] = await Promise.all([
-    fred('DGS30'), fred('DFII30', '2010-01-01'), fred('DLTIIT', '2000-01-01'),
-    fred('THREEFYTP10', '1990-01-01'), fred('CPILFESL'), fred('DCOILWTICO', '1986-01-01'),
-    fred('DGS2'), fred('DGS10'), fred('UNRATE'),
+    fred('DGS30', PROD_START), fred('DFII30', '2010-01-01'), fred('DLTIIT', PROD_START),
+    fred('THREEFYTP10', PROD_START), fred('CPILFESL', PROD_START), fred('DCOILWTICO', PROD_START),
+    fred('DGS2', PROD_START), fred('DGS10', PROD_START), fred('UNRATE', PROD_START),
   ]);
   const s: Series = { dgs30, dfii30, dltiit, tp, core, wti, dgs2, dgs10, unrate };
   console.log(`  DGS30 ${dgs30[0].date}..${dgs30[dgs30.length - 1].date} (${dgs30.length})`);

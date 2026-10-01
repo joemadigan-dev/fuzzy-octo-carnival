@@ -26,18 +26,22 @@ Spearman rank correlation between the score and the subsequent return of a
 
 | variant | horizon | n | correlation |
 |---|---|---|---|
-| Full (DFII30, 2011+) | 1 year | 179 | **−0.00** |
+| Full (DFII30, 2011+) | 1 year | 179 | **+0.01** |
 | Full | 2 years | 171 | **+0.05** |
-| Reduced (DLTIIT, 2001+) | 1 year | 301 | **−0.13** |
-| Reduced | 2 years | 293 | **−0.13** |
+| Reduced (DLTIIT, 2001+) | 1 year | 301 | **−0.07** |
+| Reduced | 2 years | 293 | **−0.07** |
+
+Percentile windows start 2000-01-01, matching what production stores. An
+earlier version of this table used 1980+ history and is superseded — see
+*A correction to this document* below.
 
 By band, 1-year forward return of the reference instrument:
 
 | band | n | mean | median | % positive |
 |---|---|---|---|---|
-| 0.0–1.9 unfavourable / weak | 148 | **+3.5%** | +3.6% | 53% |
-| 2.0–2.9 watch | 26 | **−6.7%** | −7.9% | 23% |
-| 3.0–3.9 setup building | 5 | **−5.1%** | −1.4% | 20% |
+| 0.0–1.9 unfavourable / weak | 143 | **+3.6%** | +3.8% | 54% |
+| 2.0–2.9 watch | 30 | **−5.7%** | −7.7% | 23% |
+| 3.0–3.9 setup building | 6 | **−3.0%** | −1.1% | 33% |
 | 4.0–4.4 attractive | **0** | — | — | — |
 | 4.5–5.0 exceptional | **0** | — | — | — |
 
@@ -77,14 +81,48 @@ across pillars means recession evidence alone still reaches a
 favourable-sounding band. **The gate stops stagflation. It does not stop
 buying a rally that has already happened.**
 
-**(b) Percentiles computed over regime-spanning histories make the
-valuation pillar nearly unreachable.** The 30Y nominal percentile is
-measured against a distribution containing the 1980s, when yields were
-10%+. A 4.5% yield in 2024 therefore ranks around the 20th percentile and
-scores 0.09 of its 0.70 cap. The same problem affects the term premium,
-whose 1990+ distribution is dominated by the high-term-premium 1990s. In
-2024, with the 30Y **real** yield at the 94th–98th percentile of its own
-history, the whole valuation pillar still only reached **0.89 of 2.00**.
+**(b) The veto's fourth condition collides with the valuation pillar's
+best readings.** A high 30Y real-yield percentile is usually *reached by
+rising*, and "30Y real yield ≥ +40bp over three months" is one of the four
+stagflation-veto conditions. So maximal valuation and a quiet veto rarely
+coexist, which is what actually caps the achievable score — not the
+percentile windows (see the correction below).
+
+Production on 2026-10-01 is the collision in its purest form: the valuation
+pillar at **2.00 of 2.00** — 30Y real at the **100th percentile** of its
+16-year history, 30Y nominal at the **94th** of 27 years, term premium at
+the **85th** — and the veto **ACTIVE**, one of its two triggers being the
+30Y real yield's own +56bp over three months. The score is capped at 2.5
+`WATCH` by the very move that made the valuation attractive.
+
+That may well be correct behaviour: it is the module declining to call an
+asset attractive while it is still getting cheaper, which is the
+`NOT CONFIRMED` idea expressed through the veto instead. But it means
+`ATTRACTIVE` and `EXCEPTIONAL` require long yields to be at an extreme
+**and** to have stopped rising **and** a recession to have begun **and**
+inflation to be falling — a conjunction that did not occur once in 25
+years. The bands may be unreachable by construction rather than by
+accident.
+
+### A correction to this document
+
+An earlier version of this section claimed the valuation pillar was
+"nearly unreachable" because percentiles over regime-spanning histories
+diluted it, citing 0.89 of 2.00 in 2024. **That was an artefact of the
+backtest harness, not a property of the system.** The script fetched DGS30
+from 1980 and the term premium from 1990, while production stores from
+`BACKFILL_START = 2000-01-01` and computes its percentiles on that. Against
+a distribution containing the 10%+ yields of the early eighties a 5.59%
+30Y ranks near the 20th percentile; against 2000+ it is at the 94th.
+
+So the harness was testing a weaker instrument than the one that shipped,
+and every score it produced was more macro-driven than production's would
+have been. The script now matches the production window. **The headline
+finding survived the correction** — correlations moved from −0.13…+0.05 to
+−0.07…+0.05, the ordering is still inverted, and the top two bands are
+still unobserved — but the stated cause was wrong and is replaced above.
+
+### What has NOT been done about it
 
 ### What has NOT been done about it
 
@@ -306,8 +344,8 @@ the panel's only argument.
 | `us30y` | DGS30 | FRED | 1980– (stored from 2000) | continuous through the 2002–06 auction suspension |
 | `us30y_real` | DFII30 | FRED | **2010-02-22–** | 30Y TIPS were not issued 2001–2010 |
 | `us30y_real_long` | DLTIIT | FRED | 2000– | hidden; **backtest only**; TIPS 10y+ *average* maturity, not 30Y |
-| `term_premium` | THREEFYTP10 | FRED | 1990– | see substitution note |
-| `core_cpi` | CPILFESL | FRED | monthly | 45-day staleness limit, not 6 |
+| `term_premium` | THREEFYTP10 | FRED | 1990– | substitution note below; **10**-day staleness limit |
+| `core_cpi` | CPILFESL | FRED | monthly | **75**-day staleness limit — see below |
 | `be30` | derived | — | — | `us30y − us30y_real`, forward-fill capped at 5 days |
 | `real30_impulse` | derived | — | — | 30Y real vs its own 18-month trough |
 | `wti` | DCOILWTICO | FRED | existing | reused, not re-fetched |
@@ -336,6 +374,18 @@ staleness limit and status per series, not once for the block: the inputs
 have three different publication frequencies and one shared "as of" line
 would either mark the monthly series falsely stale or imply the daily ones
 were fresher than they are.
+
+**Two staleness limits were wrong on first contact with production and are
+fixed.** `core_cpi` read stale at 61 days on 2026-10-01 while behaving
+perfectly: CPILFESL is dated at the START of the month it describes and
+published around the 10th–15th of the following month, so two lags compound
+and the newest observation is legitimately up to ~75 days old. The 45-day
+monthly default is the same trap the quarterly default documents, one step
+down, and the brief is explicit that a monthly series must not read stale
+merely for being monthly. `term_premium` publishes daily values with a ~4
+business-day lag — newest 2026-09-25 on 2026-10-01 — so the 6-day daily
+default would have marked it stale permanently. Now 75 and 10 days
+respectively; a genuinely missed release still trips both.
 
 `missing` and `stale` are different statuses. A series with no observations
 reads `UNKNOWN`, never an old-but-present number. Coverage below 0.60

@@ -304,17 +304,35 @@ export const KPIS: KpiDef[] = [
     // for exactly that reason.
     id: 'term_premium', label: '10Y TERM PREMIUM (FRB)', cluster: 'long_duration',
     unit: '%', decimals: 2, refresh: 'daily',
+    // Daily observations, but published with a ~4 BUSINESS DAY lag: on
+    // 2026-10-01 the newest value FRED served was 2026-09-25. The 6-day
+    // daily default would therefore mark this stale permanently, for a
+    // series that is behaving normally. Measured worst case is ~4 business
+    // days spanning a weekend, so 10 calendar days with slack; a genuine
+    // stall still trips it.
+    staleAfterDays: 10,
     stressSign: 1,
     signRationale: 'Compensation demanded for holding duration, over and above expected short rates. High AND STABLE is cheap duration; high AND RISING FAST is a market losing confidence in the long end — the module scores those differently rather than reading the level alone.',
     source: 'fred', seriesId: 'THREEFYTP10',
   },
   {
-    // Monthly by nature. The 45-day default from defaultStaleDays() is
-    // correct for it and it must NOT be read as stale for the crime of
-    // being monthly — that distinction is already handled in the
-    // registry rather than here.
+    // Monthly, and the 45-day monthly default is WRONG for it — observed
+    // in production on 2026-10-01, where it read stale at 61 days while
+    // behaving perfectly.
+    //
+    // Two lags compound. CPILFESL is dated at the START of the month it
+    // describes, and the figure is published around the 10th-15th of the
+    // FOLLOWING month. So just before a release the newest observation is
+    // legitimately ~75 days old: on 2026-10-14 the newest is 2026-08-01.
+    // This is the same trap the quarterly default documents, one step
+    // down, and the brief is explicit that a monthly series must not read
+    // stale merely for being monthly.
+    //
+    // 75 days accommodates both lags. A genuinely missed release — two
+    // prints absent — still trips it.
     id: 'core_cpi', label: 'CORE CPI (INDEX)', cluster: 'long_duration',
     unit: '', decimals: 1, refresh: 'daily', freq: 'monthly', hidden: true,
+    staleAfterDays: 75,
     source: 'fred', seriesId: 'CPILFESL',
   },
   {
